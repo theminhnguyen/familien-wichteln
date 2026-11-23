@@ -61,6 +61,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 svg { display: block; }
+[hidden] { display: none !important; }
 .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .prewrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .hint { color: var(--muted); font-size: var(--t-s); }
@@ -465,6 +466,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 .checks li.ok::before { background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 12.5 4 4 8-9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/14px no-repeat; }
 .checks li.warn::before { background: var(--accent-3); }
 .checks li.no::before { background: var(--danger); }
+.rem-list { padding-left: 1.1em; margin: 0 0 var(--s3); display: grid; gap: 4px; }
+.modal-seg { margin: var(--s2) 0 var(--s3); }
+.modal-seg button { min-width: 0; padding: 0 var(--s3); }
 .danger-zone { border-color: color-mix(in srgb, var(--danger) 35%, var(--line)); }
 .dz-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3); padding: var(--s3) 0; border-top: 1px solid var(--line); }
 .dz-row:first-of-type { border-top: 0; }

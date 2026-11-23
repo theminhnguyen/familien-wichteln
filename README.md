@@ -8,6 +8,9 @@ Static web app for a family Secret Santa across countries, in German, English an
 - Only the person who drew you sees your wishes. Not even the organiser can read them.
 - Extras: anonymous questions between giver and recipient, gift progress, budget in every family currency, family clock across time zones, guessing game and a big reveal, optional PIN per person.
 - Budget per gift in EUR or GBP, with approximate conversions into each family member's local currency.
+- Organiser reminders: one-tap reminder per person in their language, plus a combined message for the family group.
+- Next year: copy a round with the same family; nobody draws the same person as last time.
+- In-person mode hides shipping tips and delivery address.
 - Three layouts: Luftpost (airmail), Nordisch (nordic), Đèn lồng (lanterns).
 
 ## Stack

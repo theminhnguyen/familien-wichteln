@@ -116,6 +116,12 @@ function fmtDate(d) {
 function fmtTime(tz) {
   try { return new Intl.DateTimeFormat(loc(), { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(new Date()); } catch { return ''; }
 }
+function fmtDay(ms) {
+  try { return new Intl.DateTimeFormat(loc(), { day: 'numeric', month: 'short' }).format(new Date(Number(ms))); } catch { return ''; }
+}
+function fmtDateIn(lang, d) {
+  try { return new Intl.DateTimeFormat(LOCALES[lang] || 'en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(d + 'T12:00:00Z')); } catch { return d; }
+}
 function ymd(tz) {
   try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch { return ''; }
 }
@@ -352,6 +358,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
 };
 
 /* ---------------- render core ---------------- */
@@ -626,7 +633,7 @@ function vFacts() {
   const rows = [[t('budget'), budgetBlock(g)]];
   if (g.exchange_at) rows.push([t('exchange'), vExchangeTimes(g.exchange_at)]);
   if (g.wish_deadline) rows.push([t('wish_deadline'), esc(fmtDate(g.wish_deadline))]);
-  if (g.ship_by) rows.push([t('ship_by'), esc(fmtDate(g.ship_by))]);
+  if (g.ship_by && !g.in_person) rows.push([t('ship_by'), esc(fmtDate(g.ship_by))]);
   return `<section class="card facts"><h2>${esc(t('facts_title'))}</h2><dl>${rows.map(([k, v]) => `<div class="fact"><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}</dl></section>`;
 }
 function vNotes(notes) {
@@ -679,7 +686,7 @@ function vGiftee() {
   const prof = a.profile || {};
   const profRows = [
     ['size_top', prof.size_top], ['size_bottom', prof.size_bottom], ['size_shoe', prof.size_shoe],
-    ['likes', prof.likes], ['dislikes', prof.dislikes], ['address', prof.address],
+    ['likes', prof.likes], ['dislikes', prof.dislikes], ['address', g.in_person ? '' : prof.address],
   ].filter(r => r[1] && String(r[1]).trim());
   const wishItems = list.map(w => {
     const cur = w.cur || theirCur;
@@ -709,7 +716,7 @@ function vGiftee() {
       ${inMine != null ? `<p class="hint">${esc(t('budget_mine', { v: fmtMoney(inMine, myCur, true) }))}</p>` : ''}
       ${inTheirs != null ? `<p class="hint">${esc(t('budget_theirs', { v: fmtMoney(inTheirs, theirCur, true), name: a.name }))}</p>` : ''}</section>`;
   }
-  const ship = a.country !== me.country ? `<section class="card ship"><h2>${esc(t('ship_title', { country: countryName(a.country) }))}</h2><p>${esc(t('ship_text'))}</p>${g.ship_by ? `<p><strong>${esc(t('ship_by_line', { date: fmtDate(g.ship_by) }))}</strong></p>` : ''}</section>` : '';
+  const ship = !g.in_person && a.country !== me.country ? `<section class="card ship"><h2>${esc(t('ship_title', { country: countryName(a.country) }))}</h2><p>${esc(t('ship_text'))}</p>${g.ship_by ? `<p><strong>${esc(t('ship_by_line', { date: fmtDate(g.ship_by) }))}</strong></p>` : ''}</section>` : '';
   return `<section class="giftee">
       <p class="giftee-lead">${esc(t('you_gift'))}</p>
       <div class="giftee-card">
@@ -808,8 +815,7 @@ function vWishes() {
         <div class="row three">${pf('size_top', t('size_top'), 'M')}${pf('size_bottom', t('size_bottom'), '32/32')}${pf('size_shoe', t('size_shoe'), '42')}</div>
         ${pa('likes', t('likes'), t('likes_ph'))}
         ${pa('dislikes', t('dislikes'), t('dislikes_ph'))}
-        ${pa('address', t('address'), t('address_ph'))}
-        <p class="hint">${esc(t('address_hint'))}</p>
+        ${D.group.in_person ? '' : `${pa('address', t('address'), t('address_ph'))}<p class="hint">${esc(t('address_hint'))}</p>`}
       </section>
       <div class="savebar"><span class="hint" id="save-state">${esc(S.draftDirty ? t('unsaved') : t('saved_state'))}</span><button class="btn" type="submit">${esc(t('save'))}</button></div>
     </form>`;
@@ -889,10 +895,11 @@ function vAdmin() {
         ${ps.length ? `<ul class="plist">${ps.map(vAdminPerson).join('')}</ul>` : `<p class="hint">${esc(t('no_participants'))}</p>`}
         ${g.status === 'open' ? vAddPerson() : `<p class="hint">${esc(t('locked_after_draw'))}</p>`}
       </section>
-      <div class="stack">${vAdminDraw()}${vAdminSettings()}</div>
+      <div class="stack">${vAdminReminders()}${vAdminDraw()}${vAdminSettings()}</div>
     </div>
     ${g.revealed && A.reveal ? vChain(A.reveal, ps) : ''}
     ${store.get('wl_admin_saved_' + S.admin) ? vAdminLink(false) : ''}
+    ${vNextYear()}
     ${vDanger()}
   </main>${vFoot()}</div>`;
 }
@@ -907,8 +914,20 @@ function vAdminLink(prominent) {
     </div>
   </section>`;
 }
+function reminderKind(p, g) {
+  if (!p.last_seen_at) return 'invite';
+  if (g.status === 'drawn' && !p.viewed) return 'draw';
+  if (p.wish_count < MIN_WISHES) return 'wishes';
+  return null;
+}
+function remKey(id) { return `wl_rem_${S.admin}_${id}`; }
+function markReminded(id) { if (id) store.set(remKey(id), String(Date.now())); }
 function vAdminPerson(p) {
   const g = S.A.group;
+  const kind = reminderKind(p, g);
+  const remAt = store.get(remKey(p.id));
+  const label = kind === 'invite' ? t('invite') : kind ? t('remind') : t('share_link');
+  const icon = kind && kind !== 'invite' ? ICON.bell : ICON.share;
   return `<li class="prow">
     <span class="avatar" aria-hidden="true">${esc(p.emoji)}</span>
     <div class="prow-main">
@@ -919,10 +938,11 @@ function vAdminPerson(p) {
         ${p.has_pin ? `<span class="pill">${esc(t('pin_on'))}</span>` : ''}
         ${!p.last_seen_at ? `<span class="pill">${esc(t('never_opened_link'))}</span>` : ''}
         ${g.status === 'drawn' ? `<span class="pill ${p.viewed ? 'ok' : ''}">${esc(p.viewed ? t('opened') : t('not_opened'))}</span><span class="pill">${esc(t('gs_' + p.gift_status))}</span>` : ''}
+        ${remAt && kind ? `<span class="pill">${esc(t('reminded_at', { date: fmtDay(remAt) }))}</span>` : ''}
       </span>
     </div>
     <div class="prow-actions">
-      <button type="button" class="btn small" data-act="invite" data-id="${esc(p.id)}">${ICON.share}<span>${esc(t('invite'))}</span></button>
+      <button type="button" class="btn small ${kind ? '' : 'secondary'}" data-act="invite" data-id="${esc(p.id)}" data-kind="${kind || 'link'}">${icon}<span>${esc(label)}</span></button>
       <button type="button" class="icon-btn" data-act="edit-person" data-id="${esc(p.id)}" aria-label="${esc(t('edit'))}: ${esc(p.name)}" title="${esc(t('edit'))}">${ICON.edit}</button>
     </div>
   </li>`;
@@ -947,6 +967,7 @@ function vAdminDraw() {
         <li class="${enough ? 'ok' : 'no'}">${esc(t('check_people', { n: ps.length }))}</li>
         <li class="${missing.length ? 'warn' : 'ok'}">${esc(missing.length ? t('check_wishes_missing', { names: missing.map(p => p.name).join(', ') }) : t('check_wishes_ok'))}</li>
         <li class="ok">${esc(t('check_households'))}</li>
+        ${A.has_history ? `<li class="ok">${esc(t('check_history'))}</li>` : ''}
       </ul>
       <p class="hint">${esc(t('draw_hint'))}</p>
       <button class="btn wide" type="button" data-act="draw" ${enough ? '' : 'disabled'}>${esc(t('draw_btn'))}</button></section>`;
@@ -968,12 +989,38 @@ function vAdminSettings() {
       ${field('g-name', t('group_name'), g.name, { attrs: 'maxlength="80" required' })}
       <div class="row">${field('g-budget', t('budget_amount'), g.budget ?? '', { type: 'number', attrs: 'min="0" step="any" inputmode="decimal"' })}${currencySelect('g-cur', g.currency)}</div>
       ${field('g-ex', t('exchange_time'), toLocalInput(g.exchange_at), { type: 'datetime-local', hint: t('exchange_time_hint') })}
-      <div class="row">${field('g-wd', t('wish_deadline'), g.wish_deadline || '', { type: 'date' })}${field('g-sb', t('ship_by'), g.ship_by || '', { type: 'date', hint: t('ship_by_hint') })}</div>
+      <div class="field"><label class="check"><input type="checkbox" id="g-inperson" ${g.in_person ? 'checked' : ''} data-keep> ${esc(t('in_person'))}</label><span class="hint">${esc(t('in_person_hint'))}</span></div>
+      <div class="row">${field('g-wd', t('wish_deadline'), g.wish_deadline || '', { type: 'date' })}${field('g-sb', t('ship_by'), g.ship_by || '', { type: 'date', hint: t('ship_by_hint') }).replace('<div class="field">', `<div class="field" id="g-sb-wrap" ${g.in_person ? 'hidden' : ''}>`)}</div>
       ${area('g-notes', t('notes_title'), g.notes, t('notes_ph'), 'maxlength="4000" rows="4"')}
       ${langSelect('g-lang', g.default_lang, t('default_language'))}
       <fieldset class="field"><legend>${esc(t('layout_default'))}</legend>${layoutPicker('g-layout', g.layout)}</fieldset>
       <button class="btn" type="submit">${esc(t('save'))}</button>
     </form></section>`;
+}
+function vAdminReminders() {
+  const g = S.A.group;
+  const b = { invite: [], wishes: [], draw: [] };
+  S.A.participants.forEach(p => { const k = reminderKind(p, g); if (k) b[k].push(p.name); });
+  const keys = ['invite', 'draw', 'wishes'].filter(k => b[k].length);
+  if (!keys.length) return '';
+  return `<section class="card reminders"><h2>${esc(t('reminders_title'))}</h2>
+    <ul class="rem-list">${keys.map(k => `<li>${esc(t('reminders_' + k, { names: b[k].join(', ') }))}</li>`).join('')}</ul>
+    <p class="hint">${esc(t('reminders_hint'))}</p>
+    <button type="button" class="btn secondary" data-act="group-msg">${ICON.share}<span>${esc(t('group_msg_btn'))}</span></button>
+  </section>`;
+}
+function nextYearName(g) {
+  const m = String(g.name).match(/\b(20\d\d)\b/);
+  if (m) return g.name.replace(m[1], String(Number(m[1]) + 1));
+  const base = g.exchange_at ? new Date(g.exchange_at).getFullYear() : new Date().getFullYear();
+  return `${g.name} ${base + 1}`.slice(0, 80);
+}
+function vNextYear() {
+  const g = S.A.group;
+  if (g.status !== 'drawn') return '';
+  const name = nextYearName(g);
+  return `<section class="card next-year"><h2>${esc(t('next_year_title'))}</h2><p>${esc(t('next_year_text'))}</p>
+    <button type="button" class="btn secondary" data-act="copy-round" data-name="${esc(name)}">${esc(t('next_year_btn', { name }))}</button></section>`;
 }
 function vDanger() {
   const g = S.A.group;
@@ -1064,26 +1111,36 @@ function openLayouts() {
     ${store.get('wl_layout') ? `<button type="button" class="btn ghost" data-act="layout-reset">${esc(t('layout_follow_group'))}</button>` : ''}
     ${isAdmin ? `<p class="hint">${esc(t('layout_admin_hint'))}</p>` : ''}`);
 }
-function inviteText(p, link) {
+function personMessage(p, kind, link) {
   const g = S.A.group;
-  const deadline = g.wish_deadline ? tl(p.lang, 'invite_deadline', { date: new Intl.DateTimeFormat(LOCALES[p.lang], { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(g.wish_deadline + 'T12:00:00Z')) }) : '';
+  const deadline = g.wish_deadline ? tl(p.lang, 'invite_deadline', { date: fmtDateIn(p.lang, g.wish_deadline) }) : '';
+  if (kind === 'wishes') return tl(p.lang, 'remind_wishes_msg', { name: p.name, group: g.name, link, deadline });
+  if (kind === 'draw') return tl(p.lang, 'remind_draw_msg', { name: p.name, group: g.name, link });
   return tl(p.lang, 'invite_msg', { name: p.name, group: g.name, link, deadline });
 }
-async function openInvite(id) {
+function shareButtons(msg, remId, extra) {
+  const canShare = typeof navigator.share === 'function';
+  const rem = remId ? ` data-rem="${esc(remId)}"` : '';
+  return `<div class="btn-row">
+      ${canShare ? `<button type="button" class="btn" data-act="share" data-text="${esc(msg)}"${rem}>${ICON.share}<span>${esc(t('share'))}</span></button>` : ''}
+      <a class="btn ${canShare ? 'secondary' : ''}" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener" data-act="mark-reminded"${rem}>WhatsApp</a>
+      <button type="button" class="btn secondary" data-act="copy" data-text="${esc(msg)}"${rem}>${ICON.copy}<span>${esc(t('copy_msg'))}</span></button>
+      ${extra || ''}
+    </div>`;
+}
+async function openInvite(id, kindIn) {
   const p = S.A.participants.find(x => x.id === id);
   if (!p) return;
+  const kind = ['invite', 'wishes', 'draw', 'link'].includes(kindIn) ? kindIn : (reminderKind(p, S.A.group) || 'link');
   const link = linkFor(p.token);
-  const msg = inviteText(p, link);
-  const canShare = typeof navigator.share === 'function';
-  openModal(`<h2 id="modal-title">${esc(t('invite_title', { name: p.name }))}</h2>
-    <p class="hint">${esc(t('invite_hint', { lang: langName(p.lang) }))}</p>
-    <textarea class="invite-text" rows="8" readonly aria-label="${esc(t('invite_title', { name: p.name }))}">${esc(msg)}</textarea>
-    <div class="btn-row">
-      ${canShare ? `<button type="button" class="btn" data-act="share" data-text="${esc(msg)}">${ICON.share}<span>${esc(t('share'))}</span></button>` : ''}
-      <a class="btn ${canShare ? 'secondary' : ''}" href="https://wa.me/?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener">WhatsApp</a>
-      <button type="button" class="btn secondary" data-act="copy" data-text="${esc(msg)}">${ICON.copy}<span>${esc(t('copy_msg'))}</span></button>
-      <button type="button" class="btn ghost" data-act="copy" data-text="${esc(link)}">${esc(t('copy_link'))}</button>
-    </div>
+  const msg = personMessage(p, kind, link);
+  const isRem = kind === 'wishes' || kind === 'draw';
+  const title = isRem ? t('remind_title', { name: p.name }) : t('invite_title', { name: p.name });
+  const hint = isRem ? t('remind_hint', { reason: t('reason_' + kind), lang: langName(p.lang) }) : t('invite_hint', { lang: langName(p.lang) });
+  openModal(`<h2 id="modal-title">${esc(title)}</h2>
+    <p class="hint">${esc(hint)}</p>
+    <textarea class="invite-text" rows="8" readonly aria-label="${esc(title)}">${esc(msg)}</textarea>
+    ${shareButtons(msg, kind === 'link' ? null : p.id, `<button type="button" class="btn ghost" data-act="copy" data-text="${esc(link)}">${esc(t('copy_link'))}</button>`)}
     <div class="qr-wrap"><div class="qr" id="qr-box" role="img" aria-label="${esc(t('qr_label', { name: p.name }))}"></div><p class="hint">${esc(t('qr_hint'))}</p></div>`);
   try {
     await loadQR();
@@ -1092,6 +1149,25 @@ async function openInvite(id) {
     const box = $('#qr-box');
     if (box) box.innerHTML = q.createSvgTag(5, 10);
   } catch { const box = $('#qr-box'); if (box) box.closest('.qr-wrap').remove(); }
+}
+function groupMsgText(lang) {
+  const g = S.A.group;
+  const b = { invite: [], wishes: [], draw: [] };
+  S.A.participants.forEach(p => { const k = reminderKind(p, g); if (k) b[k].push(p.name); });
+  const lines = [];
+  if (b.invite.length) lines.push(tl(lang, 'group_msg_invite', { names: b.invite.join(', ') }));
+  if (b.draw.length) lines.push(tl(lang, 'group_msg_draw', { names: b.draw.join(', ') }));
+  if (b.wishes.length) lines.push(tl(lang, 'group_msg_wishes', { names: b.wishes.join(', '), deadline: g.wish_deadline ? tl(lang, 'group_msg_deadline', { date: fmtDateIn(lang, g.wish_deadline) }) : '' }));
+  return `${tl(lang, 'group_msg_head', { group: g.name })}\n\n${lines.join('\n')}\n\n${tl(lang, 'group_msg_foot')}`;
+}
+function openGroupMsg(lang) {
+  const l = LANGS.includes(lang) ? lang : (S.A.group.default_lang || S.lang);
+  const msg = groupMsgText(l);
+  openModal(`<h2 id="modal-title">${esc(t('group_msg_title'))}</h2>
+    <p class="hint">${esc(t('group_msg_hint'))}</p>
+    <div class="seg modal-seg" role="group" aria-label="${esc(t('language'))}">${LANGS.map(x => `<button type="button" data-act="group-msg" data-lang="${x}" aria-pressed="${x === l}" lang="${x}">${esc(tl(x, 'lang_self'))}</button>`).join('')}</div>
+    <textarea class="invite-text" rows="8" readonly aria-label="${esc(t('group_msg_title'))}">${esc(msg)}</textarea>
+    ${shareButtons(msg, null)}`);
 }
 function openEditPerson(id) {
   const p = S.A.participants.find(x => x.id === id);
@@ -1218,10 +1294,29 @@ async function onClick(e) {
     case 'settings': openSettings(); break;
     case 'close-modal': closeModal(); break;
     case 'retry': route(); break;
-    case 'copy': copyText(el.dataset.text || ''); break;
-    case 'share':
-      try { await navigator.share({ text: el.dataset.text || '' }); } catch { /* cancelled */ }
+    case 'copy':
+      copyText(el.dataset.text || '');
+      if (el.dataset.rem) { markReminded(el.dataset.rem); render(); }
       break;
+    case 'share':
+      try {
+        await navigator.share({ text: el.dataset.text || '' });
+        if (el.dataset.rem) { markReminded(el.dataset.rem); render(); }
+      } catch { /* cancelled */ }
+      break;
+    case 'mark-reminded':
+      if (el.dataset.rem) { markReminded(el.dataset.rem); setTimeout(render, 0); }
+      break;
+    case 'group-msg': openGroupMsg(el.dataset.lang); break;
+    case 'copy-round': safely(async () => {
+      const name = el.dataset.name;
+      if (!await askConfirm(t('next_year_confirm_title'), t('next_year_confirm_text', { name }), t('next_year_btn', { name }))) return;
+      const r = await rpc('wichteln_admin_copy_group', { p_admin: S.admin, p_name: name });
+      if (r.error || !r.admin_token) throw new Error(r.error || 'copy');
+      remember({ kind: 'admin', token: r.admin_token, name });
+      location.hash = 'a=' + r.admin_token;
+      toast(t('next_year_done'));
+    }); break;
     case 'forget-recent': forgetRecent(el.dataset.kind, el.dataset.token); render(); break;
     case 'reveal': doReveal(); break;
     case 'gift': safely(() => setGift(el.dataset.s, S.me.me.gift_wish)); break;
@@ -1281,7 +1376,7 @@ async function onClick(e) {
       closeModal(); location.hash = ''; break;
     /* admin */
     case 'admin-saved': store.set('wl_admin_saved_' + S.admin, '1'); render(); break;
-    case 'invite': openInvite(el.dataset.id); break;
+    case 'invite': openInvite(el.dataset.id, el.dataset.kind); break;
     case 'edit-person': openEditPerson(el.dataset.id); break;
     case 'reset-pin': safely(async () => {
       const r = await rpc('wichteln_admin_reset_pin', { p_admin: S.admin, p_id: el.dataset.id });
@@ -1307,7 +1402,11 @@ async function onClick(e) {
     }); break;
     case 'draw': safely(async () => {
       if (!await askConfirm(t('draw_confirm_title'), t('draw_confirm_text'), t('draw_btn'))) return;
-      const r = await rpc('wichteln_admin_draw', { p_admin: S.admin });
+      let r = await rpc('wichteln_admin_draw', { p_admin: S.admin });
+      if (r.error === 'impossible_history') {
+        if (!await askConfirm(t('history_conflict_title'), t('history_conflict_text'), t('draw_anyway'))) return;
+        r = await rpc('wichteln_admin_draw_ignore_history', { p_admin: S.admin });
+      }
       if (r.error) { toast(t(r.error === 'impossible' ? 'err_impossible' : r.error === 'too_few' ? 'err_too_few' : 'err_generic'), true); return; }
       confetti(); toast(t('drawn_toast')); await loadAdmin(true);
     }); break;
@@ -1361,6 +1460,7 @@ function onChange(e) {
   if (el.name === 'm-layout') { setLayout(el.value); return; }
   if (el.name === 'c-layout') { S.layout = el.value; applyTheme(); render(); return; }
   if (el.id === 'ap-country') { const l = $('#ap-lang'); if (l) l.value = langForCountry(el.value); }
+  if (el.id === 'g-inperson') { const w = $('#g-sb-wrap'); if (w) w.hidden = el.checked; }
   if (el.closest && el.closest('form[data-form="group"], form[data-form="add-person"]')) S.formDirty = true;
 }
 
@@ -1491,7 +1591,7 @@ async function submitForm(kind, form) {
       const patch = {
         name, budget: $('#g-budget').value, currency: checkedCurrency(form, 'g-cur'),
         exchange_at: ex ? new Date(ex).toISOString() : '', wish_deadline: $('#g-wd').value, ship_by: $('#g-sb').value,
-        notes: $('#g-notes').value, default_lang: $('#g-lang').value, layout,
+        notes: $('#g-notes').value, default_lang: $('#g-lang').value, layout, in_person: $('#g-inperson').checked,
       };
       const r = await rpc('wichteln_admin_update_group', { p_admin: S.admin, p_patch: patch });
       if (r.error) throw new Error(r.error);
