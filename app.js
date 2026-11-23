@@ -29,7 +29,7 @@ const COUNTRIES = {
   ID: ['IDR', 'Asia/Jakarta'], PH: ['PHP', 'Asia/Manila'], KH: ['KHR', 'Asia/Phnom_Penh'],
   LA: ['LAK', 'Asia/Vientiane'], AE: ['AED', 'Asia/Dubai'],
 };
-const CURRENCIES = [...new Set(Object.values(COUNTRIES).map(c => c[0]))].sort();
+const BUDGET_CURRENCIES = { EUR: '€', GBP: '£' };
 const EMOJIS = ['🎅', '🤶', '🧑‍🎄', '🦌', '⛄', '🎄', '🌟', '🍪', '🏮', '🧧', '🌸', '🐼', '🐯', '🦊', '🐻', '🐧', '🐶', '🐱', '🐲', '👵', '👴', '👩', '👨', '👧', '👦', '👶'];
 const GIFT_STATES = ['none', 'idea', 'bought', 'wrapped', 'shipped'];
 const DOOR_ORDER = [7, 18, 3, 22, 11, 1, 15, 9, 24, 5, 13, 20, 2, 17, 8, 21, 12, 4, 19, 6, 23, 10, 16, 14];
@@ -449,9 +449,12 @@ function countrySelect(id, value, label) {
 function langSelect(id, value, label) {
   return `<div class="field"><label for="${id}">${esc(label || t('lang_label'))}</label><select id="${id}" data-keep>${LANGS.map(l => `<option value="${l}" ${l === value ? 'selected' : ''}>${esc(tl(l, 'lang_self'))}</option>`).join('')}</select></div>`;
 }
-function currencySelect(id, value) {
-  return `<div class="field field-cur"><label for="${id}">${esc(t('currency'))}</label><select id="${id}" data-keep>${CURRENCIES.map(c => `<option value="${c}" ${c === value ? 'selected' : ''}>${c}</option>`).join('')}</select></div>`;
+function curName(c) { try { return new Intl.DisplayNames([loc()], { type: 'currency' }).of(c) || c; } catch { return c; } }
+function currencySelect(name, value) {
+  const v = BUDGET_CURRENCIES[value] ? value : 'EUR';
+  return `<fieldset class="field field-cur"><legend>${esc(t('currency'))}</legend><div class="seg-cur" role="radiogroup" aria-label="${esc(t('currency'))}">${Object.keys(BUDGET_CURRENCIES).map(c => `<label title="${esc(curName(c))}"><input type="radio" name="${name}" id="${name}-${c}" value="${c}" ${c === v ? 'checked' : ''} data-keep><span>${BUDGET_CURRENCIES[c]} ${c}</span></label>`).join('')}</div></fieldset>`;
 }
+function checkedCurrency(form, name) { return (form.querySelector(`input[name="${name}"]:checked`) || {}).value || 'EUR'; }
 function layoutPicker(name, current) {
   return `<div class="layout-pick" role="radiogroup" aria-label="${esc(t('layout'))}">${LAYOUTS.map(l => `
     <label class="lp lp-${l}">
@@ -1386,7 +1389,7 @@ async function submitForm(kind, form) {
       const ex = $('#c-ex').value;
       const layout = (form.querySelector('input[name="c-layout"]:checked') || {}).value || S.layout;
       const r = await rpc('wichteln_create_group', {
-        p_name: name, p_budget: budget === '' ? null : Number(budget), p_currency: $('#c-cur').value,
+        p_name: name, p_budget: budget === '' ? null : Number(budget), p_currency: checkedCurrency(form, 'c-cur'),
         p_exchange_at: ex ? new Date(ex).toISOString() : null, p_lang: $('#c-lang').value, p_layout: layout,
       });
       if (r.error || !r.admin_token) throw new Error(r.error || 'create');
@@ -1486,7 +1489,7 @@ async function submitForm(kind, form) {
       const ex = $('#g-ex').value;
       const layout = (form.querySelector('input[name="g-layout"]:checked') || {}).value;
       const patch = {
-        name, budget: $('#g-budget').value, currency: $('#g-cur').value,
+        name, budget: $('#g-budget').value, currency: checkedCurrency(form, 'g-cur'),
         exchange_at: ex ? new Date(ex).toISOString() : '', wish_deadline: $('#g-wd').value, ship_by: $('#g-sb').value,
         notes: $('#g-notes').value, default_lang: $('#g-lang').value, layout,
       };
