@@ -671,8 +671,19 @@ function uniqueZones() {
     const z = map.get(tz); z.countries.add(p.country); z.people.push(p);
   }
   const mine = S.me ? tzOf(S.me.me) : deviceTz();
-  return [...map.values()]
-    .map(z => Object.assign(z, { label: `${[...z.countries].map(flag).join(' ')} ${tzCity(z.tz)}`, off: tzOffsetMin(z.tz) }))
+  const zones = [...map.values()];
+  // A zone with people from one country is named after that country (in the reader's language);
+  // the time zone's city is added only where it is needed to tell two zones apart.
+  const solo = z => z.countries.size === 1 ? [...z.countries][0] : null;
+  const soloCount = {};
+  zones.forEach(z => { const cc = solo(z); if (cc) soloCount[cc] = (soloCount[cc] || 0) + 1; });
+  const place = z => {
+    const cc = solo(z);
+    if (!cc) return tzCity(z.tz);
+    return soloCount[cc] > 1 ? `${countryName(cc)} (${tzCity(z.tz)})` : countryName(cc);
+  };
+  return zones
+    .map(z => Object.assign(z, { label: `${[...z.countries].map(flag).join(' ')} ${place(z)}`, off: tzOffsetMin(z.tz) }))
     .sort((a, b) => (b.tz === mine) - (a.tz === mine) || a.off - b.off);
 }
 function vExchangeTimes(iso) {
