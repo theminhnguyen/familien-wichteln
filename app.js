@@ -383,6 +383,38 @@ function applyTheme() {
   document.documentElement.lang = S.lang;
   const meta = $('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', THEME_COLOR[S.layout] || '#ffffff');
+  updateAppManifest();
+}
+/* Home screen app: the manifest is built for the page that is open, with that page's full link
+ * (including #p=… / #a=…) as start_url. A fixed manifest would make the icon open the start page
+ * and lose the personal link. */
+function updateAppManifest() {
+  const scope = new URL('.', location.href).href;
+  const h = parseHash();
+  const brand = t('brand');
+  const group = (S.me && S.me.group.name) || (S.A && S.A.group.name) || '';
+  const color = THEME_COLOR[S.layout] || '#ffffff';
+  const m = {
+    id: scope + (h.a ? '?a=' + h.a : h.p ? '?p=' + h.p : ''),
+    name: group ? `${brand}: ${group}` : brand,
+    short_name: brand,
+    lang: S.lang,
+    start_url: location.href,
+    scope,
+    display: 'standalone',
+    background_color: color,
+    theme_color: color,
+    icons: [
+      { src: scope + 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { src: scope + 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { src: scope + 'icons/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    ],
+  };
+  const href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(m));
+  const link = $('#manifest');
+  if (link && link.getAttribute('href') !== href) link.setAttribute('href', href);
+  const title = $('meta[name="apple-mobile-web-app-title"]');
+  if (title && title.getAttribute('content') !== brand) title.setAttribute('content', brand);
 }
 function render() {
   const app = $('#app');
@@ -1712,6 +1744,8 @@ function boot() {
   document.addEventListener('change', onChange);
   document.addEventListener('submit', onSubmit);
   window.addEventListener('hashchange', route);
+  window.addEventListener('online', () => { if (S.net) route(); });
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell is optional */ });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
   window.addEventListener('beforeunload', e => { if (S.draftDirty || S.formDirty) { e.preventDefault(); e.returnValue = ''; } });
   setInterval(poll, POLL_MS);

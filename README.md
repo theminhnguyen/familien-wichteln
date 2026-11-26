@@ -13,6 +13,7 @@ Static web app for a family Secret Santa across countries, in German, English an
 - Organiser who takes part marks themselves once ("That's me"); the organiser page then links to their own page and back.
 - In-person mode hides shipping tips and delivery address.
 - Three layouts: Luftpost (airmail), Nordisch (nordic), Đèn lồng (lanterns).
+- Home screen app (PWA): the manifest is built in app.js for the open page, so the icon reopens the personal link (`#p=…`) instead of the start page; checked on iOS 26.5. `sw.js` keeps the app itself available offline (network first); round data is never cached.
 
 ## Stack
 
