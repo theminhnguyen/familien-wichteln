@@ -133,8 +133,8 @@ function fmtDay(ms) {
 function fmtDateIn(lang, d) {
   try { return new Intl.DateTimeFormat(LOCALES[lang] || 'en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(d + 'T12:00:00Z')); } catch { return d; }
 }
-function ymd(tz) {
-  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); } catch { return ''; }
+function ymd(tz, date) {
+  try { return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(date || new Date()); } catch { return ''; }
 }
 function dayOffset(tz, baseTz) {
   const a = Date.parse(ymd(tz)), b = Date.parse(ymd(baseTz));
@@ -160,17 +160,17 @@ function defaultExchangeLocal() {
   if (now > new Date(y, 11, 24, 18, 0)) y += 1;
   return `${y}-12-24T18:00`;
 }
+/* days = calendar days until the exchange in this device's time zone (0 = today, < 0 = over);
+ * d/h = exact time left, for screen readers. */
 function countdown(iso) {
   if (!iso) return null;
-  const ms = new Date(iso) - Date.now();
-  if (isNaN(ms)) return null;
-  if (ms <= 0) return { past: true, d: 0, h: 0, m: 0 };
-  return { past: false, d: Math.floor(ms / 864e5), h: Math.floor((ms % 864e5) / 36e5), m: Math.floor((ms % 36e5) / 6e4) };
-}
-function currentExchange() {
-  if (S.me) return S.me.group.exchange_at;
-  if (S.A) return S.A.group.exchange_at;
-  return new Date(defaultExchangeLocal()).toISOString();
+  const at = new Date(iso);
+  if (isNaN(at)) return null;
+  const tz = deviceTz();
+  const days = Math.round((Date.parse(ymd(tz, at)) - Date.parse(ymd(tz))) / 864e5);
+  if (isNaN(days)) return null;
+  const ms = Math.max(0, at - Date.now());
+  return { days, d: Math.floor(ms / 864e5), h: Math.floor((ms % 864e5) / 36e5) };
 }
 
 /* ---------------- money & exchange rates ---------------- */
@@ -301,6 +301,7 @@ async function loadMe(silent) {
     S.loading = false; S.net = false;
     if (r.error) { S.err = r; S.me = null; render(); return; }
     S.err = null; S.me = r;
+    if (!S.draftDirty) S.draft = null; // untouched wish form follows the server (e.g. edits from another device)
     S.lang = r.me.lang || S.lang;
     if (!store.get('wl_layout')) S.layout = r.group.layout || S.layout;
     remember({ kind: 'p', token: S.token, name: r.group.name, who: r.me.name });
@@ -499,8 +500,9 @@ function vHero(kicker, title, sub, iso) {
 }
 function cdText(cd) {
   if (!cd) return { big: '?', small: t('cd_tbd'), aria: t('cd_tbd') };
-  if (cd.past) return { big: '★', small: t('cd_today'), aria: t('cd_today') };
-  return { big: String(cd.d), small: t(cd.d === 1 ? 'cd_day' : 'cd_days'), aria: t('cd_aria', { d: cd.d, h: cd.h }) };
+  if (cd.days < 0) return { big: '★', small: t('cd_over'), aria: t('cd_over') };
+  if (cd.days === 0) return { big: '★', small: t('cd_today'), aria: t('cd_today') };
+  return { big: String(cd.days), small: t(cd.days === 1 ? 'cd_day' : 'cd_days'), aria: t('cd_aria', { d: cd.d, h: cd.h }) };
 }
 function heroPostmark(cd) {
   const c = cdText(cd);
@@ -1556,6 +1558,12 @@ async function onSubmit(e) {
     if (btn && document.body.contains(btn)) btn.disabled = false;
   }
 }
+/* Budget field → non-negative number, or null when empty or not a number. */
+function budgetValue(raw) {
+  const s = String(raw ?? '').trim();
+  const n = Number(s);
+  return s === '' || !isFinite(n) ? null : Math.max(0, n);
+}
 async function submitForm(kind, form) {
   switch (kind) {
     case 'create': {
@@ -1565,7 +1573,7 @@ async function submitForm(kind, form) {
       const ex = $('#c-ex').value;
       const layout = (form.querySelector('input[name="c-layout"]:checked') || {}).value || S.layout;
       const r = await rpc('wichteln_create_group', {
-        p_name: name, p_budget: budget === '' ? null : Number(budget), p_currency: checkedCurrency(form, 'c-cur'),
+        p_name: name, p_budget: budgetValue(budget), p_currency: checkedCurrency(form, 'c-cur'),
         p_exchange_at: ex ? new Date(ex).toISOString() : null, p_lang: $('#c-lang').value, p_layout: layout,
       });
       if (r.error || !r.admin_token) throw new Error(r.error || 'create');
@@ -1628,7 +1636,7 @@ async function submitForm(kind, form) {
       const r = await rpc('wichteln_save_me', pArgs({ p_patch: patch }));
       if (authFailed(r)) { closeModal(); return; }
       if (r.error) throw new Error(r.error);
-      closeModal(); S.draft = null;
+      closeModal();
       await loadMe(true); toast(t('saved'));
       return;
     }
@@ -1665,12 +1673,13 @@ async function submitForm(kind, form) {
       const ex = $('#g-ex').value;
       const layout = (form.querySelector('input[name="g-layout"]:checked') || {}).value;
       const patch = {
-        name, budget: $('#g-budget').value, currency: checkedCurrency(form, 'g-cur'),
+        name, budget: budgetValue($('#g-budget').value) ?? '', currency: checkedCurrency(form, 'g-cur'),
         exchange_at: ex ? new Date(ex).toISOString() : '', wish_deadline: $('#g-wd').value, ship_by: $('#g-sb').value,
         notes: $('#g-notes').value, default_lang: $('#g-lang').value, layout, in_person: $('#g-inperson').checked,
       };
       const r = await rpc('wichteln_admin_update_group', { p_admin: S.admin, p_patch: patch });
       if (r.error) throw new Error(r.error);
+      $('#g-budget').value = patch.budget; // show the stored value (e.g. -5 becomes 0), the re-render keeps field contents
       S.formDirty = false;
       if (!store.get('wl_layout') && layout) S.layout = layout;
       S.rates = null; S.ratesBase = null;
@@ -1704,7 +1713,7 @@ function boot() {
   document.addEventListener('submit', onSubmit);
   window.addEventListener('hashchange', route);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
-  window.addEventListener('beforeunload', e => { if (S.draftDirty) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', e => { if (S.draftDirty || S.formDirty) { e.preventDefault(); e.returnValue = ''; } });
   setInterval(poll, POLL_MS);
   setInterval(tick, 20000);
   route();
