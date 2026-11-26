@@ -44,6 +44,7 @@ const store = {
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
   json(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
   setJson(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
+  keys() { try { return Object.keys(localStorage); } catch { return []; } },
 };
 const sess = {
   get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
@@ -89,6 +90,16 @@ function wishCount(w) { return (Array.isArray(w) ? w : []).filter(x => x && Stri
 function clone(x) { return JSON.parse(JSON.stringify(x)); }
 function linkFor(token) { return `${location.origin}${location.pathname}#p=${token}`; }
 function adminLink() { return `${location.origin}${location.pathname}#a=${S.admin}`; }
+/* The organiser can mark which participant they are (stored per round on the server). */
+function organiser(A) { return A && A.organiser_id ? A.participants.find(p => p.id === A.organiser_id) || null : null; }
+function meSkipKey() { return 'wl_me_skip_' + S.admin; }
+/* Devices that open the organiser page remember which personal page belongs to the organiser,
+ * so only those devices show a way back from that personal page to the organiser page. */
+function ownerKey(token) { return 'wl_owner_' + token; }
+function syncOwner(keep) {
+  store.keys().forEach(k => { if (k.startsWith('wl_owner_') && k !== keep && store.get(k) === S.admin) store.del(k); });
+  if (keep && store.get(keep) !== S.admin) store.set(keep, S.admin);
+}
 function reducedMotion() { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } }
 function safeUrl(u) {
   let s = String(u || '').trim();
@@ -312,6 +323,8 @@ async function loadAdmin(silent) {
     if (!store.get('wl_layout')) S.layout = r.group.layout || S.layout;
     if (!store.get('wl_lang')) S.lang = r.group.default_lang || S.lang;
     remember({ kind: 'admin', token: S.admin, name: r.group.name });
+    const me = organiser(r);
+    syncOwner(me ? ownerKey(me.token) : null);
     render();
     ensureRates(r.group.currency);
   } catch (e) {
@@ -359,6 +372,7 @@ const ICON = {
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
+  back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m11 6-6 6 6 6"/></svg>',
 };
 
 /* ---------------- render core ---------------- */
@@ -572,7 +586,11 @@ function vTabs() {
 }
 function vParticipant() {
   const body = S.tab === 'draw' ? vDraw() : S.tab === 'wishes' ? vWishes() : S.tab === 'family' ? vFamily() : vHome();
-  return `<div class="shell participant">${vTop(S.me.group.name)}${vTabs()}<main class="main" id="main">${body}</main>${vFoot()}</div>`;
+  return `<div class="shell participant">${vTop(S.me.group.name)}${vTabs()}<main class="main" id="main">${vOwnerBar()}${body}</main>${vFoot()}</div>`;
+}
+function vOwnerBar() {
+  const adm = store.get(ownerKey(S.token));
+  return adm ? `<div class="owner-bar"><a class="btn small secondary" href="#a=${esc(adm)}" data-act="nav">${ICON.back}<span>${esc(t('to_admin'))}</span></a></div>` : '';
 }
 function vHome() {
   const D = S.me, g = D.group, me = D.me;
@@ -889,6 +907,7 @@ function vAdmin() {
   <main class="main">
     ${vHero(t('admin_kicker'), g.name, sub, g.exchange_at)}
     ${store.get('wl_admin_saved_' + S.admin) ? '' : vAdminLink(true)}
+    ${vMeCard()}
     <div class="grid2">
       <section class="card people-card">
         <div class="card-head"><h2>${esc(t('participants'))}</h2><span class="pill">${ps.length}</span></div>
@@ -914,6 +933,34 @@ function vAdminLink(prominent) {
     </div>
   </section>`;
 }
+function vMeCard() {
+  if (!S.A.participants.length) return '';
+  const me = organiser(S.A);
+  if (me) {
+    return `<section class="card me-card">
+      <div class="me-head"><span class="avatar" aria-hidden="true">${esc(me.emoji)}</span>
+        <div><h2>${esc(t('me_card_title'))}</h2><p class="hint">${esc(t('me_card_text', { name: me.name }))}</p></div></div>
+      <div class="btn-row">
+        <a class="btn" href="#p=${esc(me.token)}" data-act="nav">${ICON.gift}<span>${esc(t('me_open'))}</span></a>
+        <button type="button" class="btn ghost" data-act="pick-me">${esc(t('me_change'))}</button>
+      </div>
+    </section>`;
+  }
+  if (store.get(meSkipKey())) return '';
+  return `<section class="card me-card">
+    <h2>${esc(t('me_card_title'))}</h2><p class="hint">${esc(t('me_ask_text'))}</p>
+    <div class="btn-row">
+      <button type="button" class="btn" data-act="pick-me">${esc(t('me_pick_btn'))}</button>
+      <button type="button" class="btn ghost" data-act="me-skip">${esc(t('me_not_playing'))}</button>
+    </div>
+  </section>`;
+}
+function openPickMe() {
+  const A = S.A;
+  openModal(`<h2 id="modal-title">${esc(t('me_pick_title'))}</h2><p class="hint">${esc(t('me_pick_hint'))}</p>
+    <div class="chips">${A.participants.map(p => `<button type="button" class="chip" data-act="set-me" data-id="${esc(p.id)}" aria-pressed="${p.id === A.organiser_id}">${esc(p.emoji)} ${esc(p.name)}</button>`).join('')}</div>
+    <div class="btn-row"><button type="button" class="btn ghost" data-act="set-me" data-id="">${esc(t('me_not_playing'))}</button></div>`);
+}
 function reminderKind(p, g) {
   if (!p.last_seen_at) return 'invite';
   if (g.status === 'drawn' && !p.viewed) return 'draw';
@@ -924,16 +971,21 @@ function remKey(id) { return `wl_rem_${S.admin}_${id}`; }
 function markReminded(id) { if (id) store.set(remKey(id), String(Date.now())); }
 function vAdminPerson(p) {
   const g = S.A.group;
-  const kind = reminderKind(p, g);
+  const isMe = p.id === S.A.organiser_id;
+  const kind = isMe ? null : reminderKind(p, g);
   const remAt = store.get(remKey(p.id));
   const label = kind === 'invite' ? t('invite') : kind ? t('remind') : t('share_link');
   const icon = kind && kind !== 'invite' ? ICON.bell : ICON.share;
+  const main = isMe
+    ? `<a class="btn small" href="#p=${esc(p.token)}" data-act="nav">${ICON.gift}<span>${esc(t('me_open_short'))}</span></a>`
+    : `<button type="button" class="btn small ${kind ? '' : 'secondary'}" data-act="invite" data-id="${esc(p.id)}" data-kind="${kind || 'link'}">${icon}<span>${esc(label)}</span></button>`;
   return `<li class="prow">
     <span class="avatar" aria-hidden="true">${esc(p.emoji)}</span>
     <div class="prow-main">
       <strong>${esc(p.name)}</strong>
       <span class="prow-meta">${flag(p.country)} ${esc(countryName(p.country))}, ${esc(langName(p.lang))}${p.household ? `, ${esc(t('household_short', { h: p.household }))}` : ''}</span>
       <span class="pills">
+        ${isMe ? `<span class="pill me">${esc(t('you'))}</span>` : ''}
         <span class="pill ${p.wish_count >= MIN_WISHES ? 'ok' : 'warn'}">${esc(t('wish_count', { n: p.wish_count, min: MIN_WISHES }))}</span>
         ${p.has_pin ? `<span class="pill">${esc(t('pin_on'))}</span>` : ''}
         ${!p.last_seen_at ? `<span class="pill">${esc(t('never_opened_link'))}</span>` : ''}
@@ -942,7 +994,7 @@ function vAdminPerson(p) {
       </span>
     </div>
     <div class="prow-actions">
-      <button type="button" class="btn small ${kind ? '' : 'secondary'}" data-act="invite" data-id="${esc(p.id)}" data-kind="${kind || 'link'}">${icon}<span>${esc(label)}</span></button>
+      ${main}
       <button type="button" class="icon-btn" data-act="edit-person" data-id="${esc(p.id)}" aria-label="${esc(t('edit'))}: ${esc(p.name)}" title="${esc(t('edit'))}">${ICON.edit}</button>
     </div>
   </li>`;
@@ -997,10 +1049,14 @@ function vAdminSettings() {
       <button class="btn" type="submit">${esc(t('save'))}</button>
     </form></section>`;
 }
+/* Names per reminder reason. The organiser is left out: nobody needs to remind themselves. */
+function reminderBuckets() {
+  const g = S.A.group, b = { invite: [], wishes: [], draw: [] };
+  S.A.participants.forEach(p => { const k = p.id === S.A.organiser_id ? null : reminderKind(p, g); if (k) b[k].push(p.name); });
+  return b;
+}
 function vAdminReminders() {
-  const g = S.A.group;
-  const b = { invite: [], wishes: [], draw: [] };
-  S.A.participants.forEach(p => { const k = reminderKind(p, g); if (k) b[k].push(p.name); });
+  const b = reminderBuckets();
   const keys = ['invite', 'draw', 'wishes'].filter(k => b[k].length);
   if (!keys.length) return '';
   return `<section class="card reminders"><h2>${esc(t('reminders_title'))}</h2>
@@ -1151,9 +1207,7 @@ async function openInvite(id, kindIn) {
   } catch { const box = $('#qr-box'); if (box) box.closest('.qr-wrap').remove(); }
 }
 function groupMsgText(lang) {
-  const g = S.A.group;
-  const b = { invite: [], wishes: [], draw: [] };
-  S.A.participants.forEach(p => { const k = reminderKind(p, g); if (k) b[k].push(p.name); });
+  const g = S.A.group, b = reminderBuckets();
   const lines = [];
   if (b.invite.length) lines.push(tl(lang, 'group_msg_invite', { names: b.invite.join(', ') }));
   if (b.draw.length) lines.push(tl(lang, 'group_msg_draw', { names: b.draw.join(', ') }));
@@ -1182,6 +1236,10 @@ function openEditPerson(id) {
       <button type="submit" class="btn">${esc(t('save'))}</button>
     </form>
     <div class="modal-more">
+      ${p.id === S.A.organiser_id
+        ? `<button type="button" class="btn secondary" data-act="invite" data-id="${esc(p.id)}" data-kind="link">${esc(t('share_link'))}</button>
+           <button type="button" class="btn secondary" data-act="set-me" data-id="">${esc(t('me_not_me'))}</button>`
+        : `<button type="button" class="btn secondary" data-act="set-me" data-id="${esc(p.id)}">${esc(t('me_this_is_me'))}</button>`}
       ${p.has_pin ? `<button type="button" class="btn secondary" data-act="reset-pin" data-id="${esc(p.id)}">${esc(t('reset_pin'))}</button>` : ''}
       <button type="button" class="btn secondary" data-act="new-link" data-id="${esc(p.id)}">${esc(t('new_link'))}</button>
       ${open ? `<button type="button" class="btn danger" data-act="remove-person" data-id="${esc(p.id)}">${esc(t('remove_person'))}</button>` : ''}
@@ -1294,6 +1352,14 @@ async function onClick(e) {
     case 'settings': openSettings(); break;
     case 'close-modal': closeModal(); break;
     case 'retry': route(); break;
+    case 'nav': {
+      e.preventDefault();
+      const dirty = S.draftDirty || (S.mode === 'admin' && S.formDirty);
+      if (dirty && !await askConfirm(t('unsaved_title'), t(S.draftDirty ? 'unsaved_text' : 'unsaved_form_text'), t('discard'), true)) return;
+      S.draftDirty = false; S.formDirty = false;
+      location.hash = el.getAttribute('href').slice(1);
+      break;
+    }
     case 'copy':
       copyText(el.dataset.text || '');
       if (el.dataset.rem) { markReminded(el.dataset.rem); render(); }
@@ -1372,10 +1438,20 @@ async function onClick(e) {
     }); break;
     case 'forget-device':
       setPin(S.token, null); forgetRecent('p', S.token);
-      store.del(seenKey('in')); store.del(seenKey('out'));
+      store.del(seenKey('in')); store.del(seenKey('out')); store.del(ownerKey(S.token));
       closeModal(); location.hash = ''; break;
     /* admin */
     case 'admin-saved': store.set('wl_admin_saved_' + S.admin, '1'); render(); break;
+    case 'pick-me': openPickMe(); break;
+    case 'me-skip': store.set(meSkipKey(), '1'); render(); break;
+    case 'set-me': safely(async () => {
+      const id = el.dataset.id || null;
+      const r = await rpc('wichteln_admin_set_organiser', { p_admin: S.admin, p_id: id });
+      if (r.error) throw new Error(r.error);
+      if (id) store.del(meSkipKey()); else store.set(meSkipKey(), '1');
+      closeModal(); toast(t(id ? 'me_set_done' : 'saved'));
+      await loadAdmin(true);
+    }); break;
     case 'invite': openInvite(el.dataset.id, el.dataset.kind); break;
     case 'edit-person': openEditPerson(el.dataset.id); break;
     case 'reset-pin': safely(async () => {
@@ -1431,7 +1507,7 @@ async function onClick(e) {
       if (!await askConfirm(t('delete_group'), t('delete_confirm'), t('delete_group'), true)) return;
       const r = await rpc('wichteln_admin_delete_group', { p_admin: S.admin });
       if (r.error) throw new Error(r.error);
-      forgetRecent('admin', S.admin); store.del('wl_admin_saved_' + S.admin);
+      forgetRecent('admin', S.admin); store.del('wl_admin_saved_' + S.admin); store.del(meSkipKey()); syncOwner(null);
       toast(t('deleted')); location.hash = '';
     }); break;
     default: break;

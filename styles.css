@@ -452,6 +452,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--focus); outline:
 
 /* ---------- admin ---------- */
 .admin-link.prominent { border: 2px solid var(--accent-3); }
+.me-card { border-left: 4px solid var(--accent-2); }
+.me-head { display: flex; align-items: flex-start; gap: var(--s3); }
+.me-head h2 { margin-bottom: 4px; }
+.me-head p { margin: 0; }
+.me-card .btn-row { margin-bottom: 0; }
+.pill.me { background: var(--ink); color: var(--surface); }
+.owner-bar { display: flex; margin-bottom: var(--s3); }
 .linkbox { background: var(--chip); border-radius: var(--field-radius); padding: var(--s2) var(--s3); overflow-wrap: anywhere; font-size: var(--t-s); }
 .linkbox code { font-family: inherit; }
 .plist { list-style: none; padding: 0; margin: 0 0 var(--s4); display: grid; }

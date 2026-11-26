@@ -10,6 +10,7 @@ Static web app for a family Secret Santa across countries, in German, English an
 - Budget per gift in EUR or GBP, with approximate conversions into each family member's local currency.
 - Organiser reminders: one-tap reminder per person in their language, plus a combined message for the family group.
 - Next year: copy a round with the same family; nobody draws the same person as last time.
+- Organiser who takes part marks themselves once ("That's me"); the organiser page then links to their own page and back.
 - In-person mode hides shipping tips and delivery address.
 - Three layouts: Luftpost (airmail), Nordisch (nordic), Đèn lồng (lanterns).
 
