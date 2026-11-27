@@ -30,6 +30,7 @@ const COUNTRIES = {
   LA: ['LAK', 'Asia/Vientiane'], AE: ['AED', 'Asia/Dubai'],
 };
 const BUDGET_CURRENCIES = { EUR: '€', GBP: '£' };
+const IMPRINT_URL = 'https://theminhnguyen.github.io/impressum/';
 const EMOJIS = ['🎅', '🤶', '🧑‍🎄', '🦌', '⛄', '🎄', '🌟', '🍪', '🏮', '🧧', '🌸', '🐼', '🐯', '🦊', '🐻', '🐧', '🐶', '🐱', '🐲', '👵', '👴', '👩', '👨', '👧', '👦', '👶'];
 const GIFT_STATES = ['none', 'idea', 'bought', 'wrapped', 'shipped'];
 const DOOR_ORDER = [7, 18, 3, 22, 11, 1, 15, 9, 24, 5, 13, 20, 2, 17, 8, 21, 12, 4, 19, 6, 23, 10, 16, 14];
@@ -59,6 +60,7 @@ const S = {
   lang: 'de', layout: 'classic', tab: 'home',
   rates: null, ratesBase: null, ratesSrc: null,
   draft: null, draftDirty: false, formDirty: false, revealing: false,
+  push: null, pushKey: null,
 };
 
 /* ---------------- small helpers ---------------- */
@@ -126,6 +128,9 @@ function fmtDate(d) {
 }
 function fmtTime(tz) {
   try { return new Intl.DateTimeFormat(loc(), { hour: '2-digit', minute: '2-digit', timeZone: tz }).format(new Date()); } catch { return ''; }
+}
+function fmtDayYear(iso) {
+  try { return new Intl.DateTimeFormat(loc(), { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(iso)); } catch { return ''; }
 }
 function fmtDay(ms) {
   try { return new Intl.DateTimeFormat(loc(), { day: 'numeric', month: 'short' }).format(new Date(Number(ms))); } catch { return ''; }
@@ -305,6 +310,7 @@ async function loadMe(silent) {
     S.lang = r.me.lang || S.lang;
     if (!store.get('wl_layout')) S.layout = r.group.layout || S.layout;
     remember({ kind: 'p', token: S.token, name: r.group.name, who: r.me.name });
+    refreshPushState();
     if (S.tab === 'draw') markSeen('out');
     if (S.tab === 'wishes') markSeen('in');
     render();
@@ -478,7 +484,8 @@ function vFoot() {
   let rates = '';
   if (S.ratesSrc === 'er') rates = `<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a>`;
   else if (S.ratesSrc === 'fa') rates = `<a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">${esc(t('rates_src'))}</a>`;
-  return `<footer class="foot"><p>${esc(t('foot_privacy'))}</p>${rates ? `<p>${rates}</p>` : ''}</footer>`;
+  return `<footer class="foot"><p>${esc(t('foot_privacy'))}</p>${rates ? `<p>${rates}</p>` : ''}
+    <p class="foot-links"><button type="button" class="linkbtn" data-act="privacy">${esc(t('privacy_link'))}</button> · <a href="${IMPRINT_URL}" target="_blank" rel="noopener">${esc(t('imprint_link'))}</a></p></footer>`;
 }
 function vLoading() {
   return `<div class="shell">${vTop('')}<main class="main narrow"><div class="loading" role="status"><span class="spinner" aria-hidden="true"></span>${esc(t('loading'))}</div></main></div>`;
@@ -631,6 +638,7 @@ function vHome() {
   const sub = g.exchange_at ? t('exchange_on', { date: fmtDT(g.exchange_at, tzOf(me)) }) : t('exchange_tbd');
   return `${vHero(t('hello', { name: me.name }) + ' ' + me.emoji, g.name, sub, g.exchange_at)}
     ${vNextSteps()}
+    ${vAppCard()}
     <div class="grid2">${vFacts()}${g.notes ? vNotes(g.notes) : vProgress()}</div>
     ${g.notes ? vProgress() : ''}`;
 }
@@ -679,7 +687,7 @@ function uniqueZones() {
   zones.forEach(z => { const cc = solo(z); if (cc) soloCount[cc] = (soloCount[cc] || 0) + 1; });
   const place = z => {
     const cc = solo(z);
-    if (!cc) return tzCity(z.tz);
+    if (!cc) return [...z.countries].map(countryName).join(' · ');
     return soloCount[cc] > 1 ? `${countryName(cc)} (${tzCity(z.tz)})` : countryName(cc);
   };
   return zones
@@ -1120,12 +1128,19 @@ function vNextYear() {
   const g = S.A.group;
   if (g.status !== 'drawn') return '';
   const name = nextYearName(g);
+  if (g.has_next) {
+    return `<section class="card next-year"><h2>${esc(t('next_year_title'))}</h2><p>${esc(t('next_year_exists'))}</p>
+    <button type="button" class="btn secondary" data-act="copy-round" data-name="${esc(name)}">${esc(t('next_year_open'))}</button></section>`;
+  }
   return `<section class="card next-year"><h2>${esc(t('next_year_title'))}</h2><p>${esc(t('next_year_text'))}</p>
     <button type="button" class="btn secondary" data-act="copy-round" data-name="${esc(name)}">${esc(t('next_year_btn', { name }))}</button></section>`;
 }
 function vDanger() {
   const g = S.A.group;
+  const keep = g.purged ? t('retention_done', { del: fmtDayYear(g.delete_at) })
+    : t('retention_text', { purge: fmtDayYear(g.purge_at), del: fmtDayYear(g.delete_at) });
   return `<section class="card danger-zone"><h2>${esc(t('danger_title'))}</h2>
+    ${g.purge_at ? `<p class="hint">${esc(keep)}</p>` : ''}
     ${g.status === 'drawn' ? `<div class="dz-row"><div><strong>${esc(t('reset_draw'))}</strong><p class="hint">${esc(t('reset_draw_hint'))}</p></div><button class="btn danger" type="button" data-act="reset-draw">${esc(t('reset_draw'))}</button></div>` : ''}
     <div class="dz-row"><div><strong>${esc(t('delete_group'))}</strong><p class="hint">${esc(t('delete_group_hint'))}</p></div><button class="btn danger" type="button" data-act="delete-group">${esc(t('delete_group'))}</button></div>
   </section>`;
@@ -1197,7 +1212,7 @@ function loadQR() {
   return new Promise((resolve, reject) => {
     if (window.qrcode) return resolve();
     const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js';
+    s.src = 'vendor/qrcode.js'; // qrcode-generator 1.4.4 (MIT), hosted here instead of a CDN
     s.onload = () => resolve();
     s.onerror = reject;
     document.head.appendChild(s);
@@ -1320,6 +1335,10 @@ function openSettings() {
       ${me.has_pin ? `<button type="button" class="btn ghost" data-act="remove-pin">${esc(t('pin_remove'))}</button>` : ''}
     </section>
     <section class="modal-section">
+      <h3>${esc(t('push_section'))}</h3>
+      ${vPushControls()}
+    </section>
+    <section class="modal-section">
       <h3>${esc(t('layout'))}</h3>
       ${layoutPicker('m-layout', S.layout)}
     </section>
@@ -1327,6 +1346,94 @@ function openSettings() {
       <h3>${esc(t('forget_device'))}</h3><p class="hint">${esc(t('forget_device_hint'))}</p>
       <button type="button" class="btn ghost" data-act="forget-device">${esc(t('forget_device'))}</button>
     </section>`);
+}
+
+/* ---------------- home screen app & notifications ---------------- */
+const PUSH_OK = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+function isIOS() { return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function isStandalone() { try { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch { return false; } }
+function pushKey(token) { return 'wl_push_' + (token || S.token); }
+function hintKey() { return 'wl_apphint_' + S.token; }
+function b64uToBytes(s) {
+  const b = atob(String(s).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  return Uint8Array.from(b, c => c.charCodeAt(0));
+}
+async function currentSub() {
+  try { const reg = await navigator.serviceWorker.getRegistration(); return reg ? await reg.pushManager.getSubscription() : null; } catch { return null; }
+}
+/* S.push: 'install' (iPhone in Safari: add to the home screen first), 'off', 'on', 'denied' or null (no notifications here) */
+async function refreshPushState() {
+  let st = null;
+  if (S.mode === 'p' && S.me) {
+    if (isIOS() && !isStandalone()) st = 'install'; // iOS offers notifications only to home screen apps
+    else if (PUSH_OK) {
+      if (Notification.permission === 'denied') st = 'denied';
+      else {
+        const sub = await currentSub();
+        st = sub && store.get(pushKey()) === sub.endpoint && Notification.permission === 'granted' ? 'on' : 'off';
+        if (st === 'off' && !S.pushKey) rpc('wichteln_push_key', {}).then(k => { S.pushKey = k || null; }).catch(() => {});
+      }
+    }
+  }
+  if (st !== S.push) { S.push = st; if (S.mode === 'p' && S.me && !S.loading) render(); }
+}
+async function pushOn() {
+  // ask first, straight from the tap: Safari only shows the question during a user gesture
+  const perm = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  if (perm !== 'granted') { await refreshPushState(); toast(t('push_denied'), true); return; }
+  const key = S.pushKey || await rpc('wichteln_push_key', {});
+  if (!key) throw new Error('push_key');
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(key) });
+  const r = await rpc('wichteln_push_subscribe', pArgs({ p_sub: sub.toJSON() }));
+  if (authFailed(r)) return;
+  if (r.error) throw new Error(r.error);
+  store.set(pushKey(), sub.endpoint);
+  if ($('#modal').open) closeModal();
+  await refreshPushState();
+  render(); toast(t('push_on_done'));
+}
+async function pushOff(quiet) {
+  // remember the link now: "forget this device" leaves the page while this is still running
+  const token = S.token, pin = S.pin || null;
+  const sub = await currentSub();
+  const endpoint = (sub && sub.endpoint) || store.get(pushKey(token));
+  if (endpoint) await rpc('wichteln_push_unsubscribe', { p_token: token, p_pin: pin, p_endpoint: endpoint }).catch(() => {});
+  store.del(pushKey(token));
+  // the browser subscription is shared by all links on this device; drop it only when no other link uses it
+  if (sub && !store.keys().some(k => k.startsWith('wl_push_') && store.get(k) === sub.endpoint)) await sub.unsubscribe().catch(() => {});
+  if (quiet === true) return;
+  if ($('#modal').open) closeModal();
+  await refreshPushState();
+  render(); toast(t('push_off_done'));
+}
+function vPushControls() {
+  if (S.push === 'install') return `<p class="hint">${esc(t('push_needs_app'))}</p>`;
+  if (S.push === 'denied') return `<p class="hint">${esc(t('push_denied'))}</p>`;
+  if (S.push === 'on') return `<p class="hint">${esc(t('push_on_text'))}</p><button type="button" class="btn ghost" data-act="push-off">${esc(t('push_off'))}</button>`;
+  if (S.push === 'off') return `<p class="hint">${esc(t('push_text'))}</p><button type="button" class="btn secondary" data-act="push-on">${ICON.bell}<span>${esc(t('push_on'))}</span></button>`;
+  return `<p class="hint">${esc(t('push_unsupported'))}</p>`;
+}
+function vAppCard() {
+  if (store.get(hintKey()) === 'no') return '';
+  if (S.push === 'install') {
+    return `<section class="card app-card"><h2>${esc(t('app_title'))}</h2><p>${esc(t('app_text'))}</p>
+      <ol class="how-list">${['app_step1', 'app_step2', 'app_step3'].map(k => `<li>${esc(t(k))}</li>`).join('')}</ol>
+      <button type="button" class="btn ghost small" data-act="app-hint-no">${esc(t('app_hint_no'))}</button></section>`;
+  }
+  if (S.push === 'off') {
+    return `<section class="card app-card"><h2>${esc(t('push_title'))}</h2><p>${esc(t('push_text'))}</p>
+      <div class="btn-row"><button type="button" class="btn" data-act="push-on">${ICON.bell}<span>${esc(t('push_on'))}</span></button>
+      <button type="button" class="btn ghost" data-act="app-hint-no">${esc(t('push_later'))}</button></div></section>`;
+  }
+  return '';
+}
+function openPrivacy() {
+  const doc = (typeof PRIVACY !== 'undefined' && (PRIVACY[S.lang] || PRIVACY.de)) || [];
+  openModal(`<h2 id="modal-title">${esc(t('privacy_link'))}</h2>
+    <div class="privacy">${doc.map(([h, p]) => `<h3>${esc(h)}</h3><p>${esc(p)}</p>`).join('')}
+    <p><a href="${IMPRINT_URL}" target="_blank" rel="noopener">${esc(t('imprint_link'))}</a></p></div>`);
 }
 
 /* ---------------- actions ---------------- */
@@ -1395,6 +1502,10 @@ async function onClick(e) {
       S.layout = (S.me && S.me.group.layout) || (S.A && S.A.group.layout) || 'classic';
       render(); closeModal(); break;
     case 'settings': openSettings(); break;
+    case 'privacy': openPrivacy(); break;
+    case 'push-on': safely(pushOn); break;
+    case 'push-off': safely(pushOff); break;
+    case 'app-hint-no': store.set(hintKey(), 'no'); render(); break;
     case 'close-modal': closeModal(); break;
     case 'retry': route(); break;
     case 'nav': {
@@ -1421,12 +1532,12 @@ async function onClick(e) {
     case 'group-msg': openGroupMsg(el.dataset.lang); break;
     case 'copy-round': safely(async () => {
       const name = el.dataset.name;
-      if (!await askConfirm(t('next_year_confirm_title'), t('next_year_confirm_text', { name }), t('next_year_btn', { name }))) return;
+      if (!S.A.group.has_next && !await askConfirm(t('next_year_confirm_title'), t('next_year_confirm_text', { name }), t('next_year_btn', { name }))) return;
       const r = await rpc('wichteln_admin_copy_group', { p_admin: S.admin, p_name: name });
       if (r.error || !r.admin_token) throw new Error(r.error || 'copy');
-      remember({ kind: 'admin', token: r.admin_token, name });
+      if (!r.existing) remember({ kind: 'admin', token: r.admin_token, name });
       location.hash = 'a=' + r.admin_token;
-      toast(t('next_year_done'));
+      toast(t(r.existing ? 'next_year_opened' : 'next_year_done'));
     }); break;
     case 'forget-recent': forgetRecent(el.dataset.kind, el.dataset.token); render(); break;
     case 'reveal': doReveal(); break;
@@ -1482,6 +1593,7 @@ async function onClick(e) {
       setPin(S.token, null); S.pin = null; S.me.me.has_pin = false; closeModal(); toast(t('pin_removed')); render();
     }); break;
     case 'forget-device':
+      pushOff(true).catch(() => {});
       setPin(S.token, null); forgetRecent('p', S.token);
       store.del(seenKey('in')); store.del(seenKey('out')); store.del(ownerKey(S.token));
       closeModal(); location.hash = ''; break;

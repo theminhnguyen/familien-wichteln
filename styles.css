@@ -105,6 +105,13 @@ svg { display: block; }
 .grid2 + .card, .grid2 + .grid2, .card + .grid2, .steps + .grid2 { margin-top: var(--s4); }
 .foot { padding: var(--s6) var(--s4) 120px; text-align: center; color: var(--muted); font-size: var(--t-xs); }
 .foot p { max-width: 60ch; margin: 0 auto var(--s2); }
+.linkbtn { border: 0; background: none; padding: 0; font: inherit; color: var(--link); text-decoration: underline; cursor: pointer; }
+.foot-links a { color: var(--link); }
+.app-card { border-left: 4px solid var(--accent-3); }
+.app-card .how-list { margin-bottom: var(--s3); }
+.app-card .btn-row { margin-bottom: 0; }
+.privacy h3 { font-size: var(--t-m); margin: var(--s4) 0 4px; }
+.privacy p { margin: 0 0 var(--s2); color: var(--muted); }
 
 /* ---------- tabs (base = top bar) ---------- */
 .tabs { display: flex; gap: var(--s1); }

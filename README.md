@@ -13,6 +13,8 @@ Static web app for a family Secret Santa across countries, in German, English an
 - Organiser who takes part marks themselves once ("That's me"); the organiser page then links to their own page and back.
 - In-person mode hides shipping tips and delivery address.
 - Three layouts: Luftpost (airmail), Nordisch (nordic), Đèn lồng (lanterns).
+- Push notifications (opt-in per device): draw done, a question or answer from your Secret Santa, gift shipped, big reveal. Texts never contain names. On iPhone they need the home screen app; the page shows how to add it.
+- Privacy: in-app privacy notice (DE/EN/VI) and a link to the legal notice. Fonts and the QR library are self-hosted (no Google, no CDN). 60 days after the exchange, wishes, addresses and messages are deleted automatically; 15 months after it the whole round (names and pairs stay until then so next year avoids repeat pairs).
 - Home screen app (PWA): the manifest is built in app.js for the open page, so the icon reopens the personal link (`#p=…`) instead of the start page; checked on iOS 26.5. `sw.js` keeps the app itself available offline (network first); round data is never cached.
 
 ## Stack
@@ -20,3 +22,5 @@ Static web app for a family Secret Santa across countries, in German, English an
 - Plain HTML/CSS/JS, no build step. Deploy the repo root as a static site (Vercel framework preset "Other").
 - Data: Supabase project `pixelpost`, private schema `wichteln`. The browser only calls token-checked RPC functions `public.wichteln_*` with the publishable key.
 - Exchange rates: open.er-api.com with fallback to fawazahmed0/exchange-api.
+- Push: events write to `wichteln.push_outbox` (triggers on messages, groups, participants); a trigger pings the edge function `wichteln-push` via pg_net, which sends Web Push (VAPID key pair created by the function and kept in `wichteln.push_config`). Source: `supabase/functions/wichteln-push/index.ts`.
+- Clean-up: `wichteln.cleanup()` runs daily via pg_cron (job `wichteln-cleanup`).
