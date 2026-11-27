@@ -199,30 +199,32 @@ function convert(amount, from, to) {
 }
 async function ensureRates(base) {
   if (!base || (S.ratesBase === base && S.rates)) return;
-  const ck = 'wl_rates_' + base;
+  const ck = 'wl_rates2_' + base; // v2: new main source
   const cached = store.json(ck, null);
   if (cached && Date.now() - cached.at < 12 * 3600e3) {
     S.rates = cached.rates; S.ratesBase = base; S.ratesSrc = cached.src; softRender(); return;
   }
+  // Main source: the free currency-api (public domain data, no attribution needed).
+  // Only if both of its mirrors fail, ExchangeRate-API is used; its free plan asks for a credit line.
   let rates = null, src = null;
-  try {
-    const r = await fetch(`https://open.er-api.com/v6/latest/${base}`);
-    const j = await r.json();
-    if (j && j.result === 'success' && j.rates) { rates = j.rates; src = 'er'; }
-  } catch { /* try fallback */ }
+  const urls = [
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${base.toLowerCase()}.min.json`,
+    `https://latest.currency-api.pages.dev/v1/currencies/${base.toLowerCase()}.min.json`,
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u);
+      const j = await r.json();
+      const obj = j && j[base.toLowerCase()];
+      if (obj) { rates = {}; for (const k in obj) rates[k.toUpperCase()] = obj[k]; src = 'fa'; break; }
+    } catch { /* next */ }
+  }
   if (!rates) {
-    const urls = [
-      `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${base.toLowerCase()}.min.json`,
-      `https://latest.currency-api.pages.dev/v1/currencies/${base.toLowerCase()}.min.json`,
-    ];
-    for (const u of urls) {
-      try {
-        const r = await fetch(u);
-        const j = await r.json();
-        const obj = j && j[base.toLowerCase()];
-        if (obj) { rates = {}; for (const k in obj) rates[k.toUpperCase()] = obj[k]; src = 'fa'; break; }
-      } catch { /* next */ }
-    }
+    try {
+      const r = await fetch(`https://open.er-api.com/v6/latest/${base}`);
+      const j = await r.json();
+      if (j && j.result === 'success' && j.rates) { rates = j.rates; src = 'er'; }
+    } catch { /* no rates: amounts are shown without conversion */ }
   }
   if (rates) {
     S.rates = rates; S.ratesBase = base; S.ratesSrc = src;
@@ -274,8 +276,30 @@ function forgetRecent(kind, token) {
   store.setJson('wl_recent', store.json('wl_recent', []).filter(e => !(e.kind === kind && e.token === token)));
 }
 
+/* Home-screen app: iOS always starts at the page the icon was added from. Each icon remembers
+ * the page that was open last (e.g. the own page instead of the organiser page) and reopens it. */
+function resumeKey(launch) { return 'wl_resume_' + launch; }
+function trackResume() {
+  const launch = sess.get('wl_launch');
+  if (!launch || !isStandalone()) return;
+  const h = location.hash;
+  if (/^#(a|p)=/.test(h)) store.set(resumeKey(launch), h);
+}
+function forgetResume() {
+  // a page that no longer exists must not be reopened on the next start
+  store.keys().forEach(k => { if (k.startsWith('wl_resume_') && store.get(k) === location.hash) store.del(k); });
+}
+function resumeOnLaunch() {
+  if (!isStandalone() || sess.get('wl_launch') != null) return false;
+  const launch = location.hash || '#';
+  sess.set('wl_launch', launch);
+  const to = store.get(resumeKey(launch));
+  if (to && to !== launch && /^#(a|p)=/.test(to)) { location.replace(to); return true; }
+  return false;
+}
 async function route() {
   const h = parseHash();
+  trackResume();
   if (S.draftDirty && S.me) flushWishes(); // leaving the page: unsaved wishes go out first
   S.err = null; S.net = false; S.me = null; S.A = null; S.draft = null; S.draftDirty = false; S.formDirty = false; S.savedSig = null; S.saveFailed = false;
   closeModal();
@@ -305,7 +329,11 @@ async function loadMe(silent) {
   try {
     const r = await rpc('wichteln_me', { p_token: S.token, p_pin: S.pin || null, p_tz: deviceTz() });
     S.loading = false; S.net = false;
-    if (r.error) { S.err = r; S.me = null; render(); return; }
+    if (r.error) {
+      S.err = r; S.me = null;
+      if (r.error === 'not_found') forgetResume();
+      render(); return;
+    }
     S.err = null; S.me = r;
     // the wish form follows the server when it was changed elsewhere (another device); own edits stay as typed
     if (!S.draftDirty && !saving && wishSig(r.me.wishes, r.me.profile) !== S.savedSig) { S.draft = null; S.savedSig = wishSig(r.me.wishes, r.me.profile); }
@@ -326,7 +354,7 @@ async function loadAdmin(silent) {
   try {
     const r = await rpc('wichteln_admin_get', { p_admin: S.admin });
     S.loading = false; S.net = false;
-    if (r.error) { S.err = r; S.A = null; render(); return; }
+    if (r.error) { S.err = r; S.A = null; if (r.error === 'not_found') forgetResume(); render(); return; }
     S.err = null; S.A = r;
     if (!store.get('wl_layout')) S.layout = r.group.layout || S.layout;
     if (!store.get('wl_lang')) S.lang = r.group.default_lang || S.lang;
@@ -481,10 +509,9 @@ function vTop(sub) {
   </header>`;
 }
 function vFoot() {
-  let rates = '';
-  if (S.ratesSrc === 'er') rates = `<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">Rates By Exchange Rate API</a>`;
-  else if (S.ratesSrc === 'fa') rates = `<a href="https://github.com/fawazahmed0/exchange-api" target="_blank" rel="noopener">${esc(t('rates_src'))}</a>`;
-  return `<footer class="foot"><p>${esc(t('foot_privacy'))}</p>${rates ? `<p>${rates}</p>` : ''}
+  // credit line only for the fallback source, whose free plan requires it
+  const rates = S.ratesSrc === 'er' ? `<a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">${esc(t('rates_src'))}</a>` : '';
+  return `<footer class="foot"><p>${esc(t('foot_privacy'))}</p>${rates ? `<p class="rates-src">${rates}</p>` : ''}
     <p class="foot-links"><button type="button" class="linkbtn" data-act="privacy">${esc(t('privacy_link'))}</button> · <a href="${IMPRINT_URL}" target="_blank" rel="noopener">${esc(t('imprint_link'))}</a></p></footer>`;
 }
 function vLoading() {
@@ -2070,6 +2097,7 @@ function boot() {
   window.addEventListener('beforeunload', e => { if (S.draftDirty || S.formDirty) { e.preventDefault(); e.returnValue = ''; } });
   setInterval(poll, POLL_MS);
   setInterval(tick, 20000);
-  route();
+  store.keys().forEach(k => { if (k.startsWith('wl_rates_')) store.del(k); }); // rates cached by the old version
+  if (!resumeOnLaunch()) route(); // a resumed start reaches route() through the hash change
 }
 boot();

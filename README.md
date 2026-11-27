@@ -24,6 +24,7 @@ Static web app for a family Secret Santa across countries, in German, English an
 
 - Plain HTML/CSS/JS, no build step. Deploy the repo root as a static site (Vercel framework preset "Other").
 - Data: Supabase project `pixelpost`, private schema `wichteln`. The browser only calls token-checked RPC functions `public.wichteln_*` with the publishable key.
-- Exchange rates: open.er-api.com with fallback to fawazahmed0/exchange-api.
+- Exchange rates: fawazahmed0/exchange-api (no attribution needed) with fallback to open.er-api.com (credit line shown only then).
+- Home screen app: each icon remembers the page that was open last (`wl_resume_<start hash>`) and reopens it, because iOS always starts at the page the icon was added from.
 - Push: events write to `wichteln.push_outbox` (triggers on messages, groups, participants); a trigger pings the edge function `wichteln-push` via pg_net, which sends Web Push (VAPID key pair created by the function and kept in `wichteln.push_config`). Source: `supabase/functions/wichteln-push/index.ts`.
 - Clean-up: `wichteln.cleanup()` runs daily via pg_cron (job `wichteln-cleanup`).
