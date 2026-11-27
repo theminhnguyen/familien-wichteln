@@ -276,7 +276,8 @@ function forgetRecent(kind, token) {
 
 async function route() {
   const h = parseHash();
-  S.err = null; S.net = false; S.me = null; S.A = null; S.draft = null; S.draftDirty = false; S.formDirty = false;
+  if (S.draftDirty && S.me) flushWishes(); // leaving the page: unsaved wishes go out first
+  S.err = null; S.net = false; S.me = null; S.A = null; S.draft = null; S.draftDirty = false; S.formDirty = false; S.savedSig = null; S.saveFailed = false;
   closeModal();
   if (h.a) {
     S.mode = 'admin'; S.admin = h.a; S.token = null;
@@ -306,13 +307,13 @@ async function loadMe(silent) {
     S.loading = false; S.net = false;
     if (r.error) { S.err = r; S.me = null; render(); return; }
     S.err = null; S.me = r;
-    if (!S.draftDirty) S.draft = null; // untouched wish form follows the server (e.g. edits from another device)
+    // the wish form follows the server when it was changed elsewhere (another device); own edits stay as typed
+    if (!S.draftDirty && !saving && wishSig(r.me.wishes, r.me.profile) !== S.savedSig) { S.draft = null; S.savedSig = wishSig(r.me.wishes, r.me.profile); }
     S.lang = r.me.lang || S.lang;
     if (!store.get('wl_layout')) S.layout = r.group.layout || S.layout;
     remember({ kind: 'p', token: S.token, name: r.group.name, who: r.me.name });
     refreshPushState();
-    if (S.tab === 'draw') markSeen('out');
-    if (S.tab === 'wishes') markSeen('in');
+    if (S.tab === 'messages') { markSeen('out'); markSeen('in'); }
     render();
     ensureRates(r.group.currency);
   } catch (e) {
@@ -367,7 +368,6 @@ const ICON = {
   heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10.1A4.2 4.2 0 0 1 12 7.6a4.2 4.2 0 0 1 7.5 2.3C19.5 15.4 12 20 12 20z"/></svg>',
   people: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.2"/><path d="M3 19.5c.6-3.4 3-5.5 6-5.5s5.4 2.1 6 5.5"/><circle cx="17" cy="9" r="2.5"/><path d="M16.2 14.2c2.5.2 4.2 2 4.8 4.8"/></svg>',
   gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/></svg>',
-  layout: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2"/><path d="M3.5 9h17M10 9v11"/></svg>',
   share: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3.5"/><path d="M7.5 8 12 3.5 16.5 8"/><path d="M5 12v7.5h14V12"/></svg>',
   copy: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>',
   edit: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg>',
@@ -378,6 +378,7 @@ const ICON = {
   lock: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>',
   close: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>',
   check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
+  chat: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   bell: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></svg>',
   back: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5"/><path d="m11 6-6 6 6 6"/></svg>',
 };
@@ -475,7 +476,6 @@ function vTop(sub) {
       <div class="seg" role="group" aria-label="${esc(t('language'))}">
         ${LANGS.map(l => `<button type="button" data-act="lang" data-lang="${l}" aria-pressed="${S.lang === l}" lang="${l}" title="${esc(tl(l, 'lang_self'))}">${l.toUpperCase()}</button>`).join('')}
       </div>
-      <button type="button" class="icon-btn" data-act="layouts" aria-label="${esc(t('layout'))}" title="${esc(t('layout'))}">${ICON.layout}</button>
       ${showSettings ? `<button type="button" class="icon-btn" data-act="settings" aria-label="${esc(t('my_settings'))}" title="${esc(t('my_settings'))}">${ICON.gear}</button>` : ''}
     </div>
   </header>`;
@@ -607,6 +607,8 @@ function vLanding() {
         <ol class="how-list">${[1, 2, 3, 4].map(i => `<li><strong>${esc(t('how_' + i + '_t'))}</strong><span>${esc(t('how_' + i))}</span></li>`).join('')}</ol>
         <h3>${esc(t('extras_title'))}</h3>
         <ul class="extras">${t('extras_list').split('|').map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+        <h3>${esc(t('lost_link_title'))}</h3>
+        <p class="hint">${esc(t('lost_link_text'))}</p>
       </section>
     </div>
     ${recent.length ? `<section class="card recent"><h2>${esc(t('recent_title'))}</h2><ul class="recent-list">${recent.map(r => `
@@ -618,15 +620,16 @@ function vLanding() {
 /* ---------------- participant ---------------- */
 function vTabs() {
   const D = S.me;
-  const drawBadge = unread('out') + (D.group.status === 'drawn' && D.assignment && !D.me.viewed_at ? 1 : 0);
-  const tabs = [['home', ICON.home, t('tab_home'), 0], ['draw', ICON.gift, t('tab_draw'), drawBadge], ['wishes', ICON.heart, t('tab_wishes'), unread('in')], ['family', ICON.people, t('tab_family'), 0]];
+  const drawBadge = D.group.status === 'drawn' && D.assignment && !D.me.viewed_at ? 1 : 0;
+  const tabs = [['home', ICON.home, t('tab_home'), 0], ['draw', ICON.gift, t('tab_draw'), drawBadge], ['wishes', ICON.heart, t('tab_wishes'), 0],
+    ['messages', ICON.chat, t('tab_messages'), unread('in') + unread('out')], ['family', ICON.people, t('tab_family'), 0]];
   return `<nav class="tabs" aria-label="${esc(t('nav'))}">${tabs.map(([k, ic, label, b]) => `
     <button type="button" class="tab" data-act="tab" data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ''}>
       <span class="ico">${ic}</span><span class="tab-label">${esc(label)}</span>${b ? `<span class="badge"><span class="sr-only">${esc(t('new_items'))}</span>${b}</span>` : ''}
     </button>`).join('')}</nav>`;
 }
 function vParticipant() {
-  const body = S.tab === 'draw' ? vDraw() : S.tab === 'wishes' ? vWishes() : S.tab === 'family' ? vFamily() : vHome();
+  const body = S.tab === 'draw' ? vDraw() : S.tab === 'wishes' ? vWishes() : S.tab === 'messages' ? vMessages() : S.tab === 'family' ? vFamily() : vHome();
   return `<div class="shell participant">${vTop(S.me.group.name)}${vTabs()}<main class="main" id="main">${vOwnerBar()}${body}</main>${vFoot()}</div>`;
 }
 function vOwnerBar() {
@@ -637,10 +640,28 @@ function vHome() {
   const D = S.me, g = D.group, me = D.me;
   const sub = g.exchange_at ? t('exchange_on', { date: fmtDT(g.exchange_at, tzOf(me)) }) : t('exchange_tbd');
   return `${vHero(t('hello', { name: me.name }) + ' ' + me.emoji, g.name, sub, g.exchange_at)}
+    ${vJourney()}
+    ${vBigOffer()}
     ${vNextSteps()}
     ${vAppCard()}
     <div class="grid2">${vFacts()}${g.notes ? vNotes(g.notes) : vProgress()}</div>
     ${g.notes ? vProgress() : ''}`;
+}
+/* Three stations every participant walks through: wishes → draw → gift exchange. */
+function vJourney() {
+  const D = S.me, g = D.group, me = D.me;
+  const wishesDone = wishCount(me.wishes) >= MIN_WISHES;
+  const drawn = g.status === 'drawn';
+  const cd = countdown(g.exchange_at);
+  const over = g.revealed || (cd && cd.days < 0);
+  const st = [
+    { k: 'wishes', done: wishesDone, label: t('j_wishes') },
+    { k: 'draw', done: drawn && !!me.viewed_at, label: t('j_draw') },
+    { k: 'exchange', done: over, label: t('j_exchange') },
+  ];
+  const cur = st.findIndex(x => !x.done);
+  return `<ol class="journey" aria-label="${esc(t('j_aria'))}">${st.map((x, i) => `<li class="${x.done ? 'done' : i === cur ? 'now' : ''}" ${i === cur ? 'aria-current="step"' : ''}>
+    <span class="j-dot" aria-hidden="true">${x.done ? '✓' : i + 1}</span><span class="j-label">${esc(x.label)}</span></li>`).join('')}</ol>`;
 }
 function vNextSteps() {
   const D = S.me, g = D.group, me = D.me, wc = wishCount(me.wishes);
@@ -648,8 +669,8 @@ function vNextSteps() {
   if (g.revealed) items.push({ tone: 'hot', title: t('ns_reveal_title'), text: t('ns_reveal_text'), tab: 'family', btn: t('ns_reveal_btn') });
   if (g.status === 'drawn' && D.assignment && !me.viewed_at) items.push({ tone: 'hot', title: t('ns_draw_title'), text: t('ns_draw_text'), tab: 'draw', btn: t('ns_draw_btn') });
   if (wc < MIN_WISHES) items.push({ tone: 'warn', title: t('ns_wishes_title', { n: MIN_WISHES - wc }), text: g.wish_deadline ? t('ns_wishes_deadline', { date: fmtDate(g.wish_deadline) }) : t('ns_wishes_text'), tab: 'wishes', btn: t('ns_wishes_btn') });
-  if (unread('in')) items.push({ tone: 'hot', title: t('ns_msg_title'), text: t('ns_msg_text'), tab: 'wishes', btn: t('ns_msg_btn') });
-  if (unread('out') && D.assignment) items.push({ tone: 'hot', title: t('ns_reply_title', { name: D.assignment.name }), text: t('ns_reply_text'), tab: 'draw', btn: t('ns_reply_btn') });
+  if (unread('in')) items.push({ tone: 'hot', title: t('ns_msg_title'), text: t('ns_msg_text'), tab: 'messages', btn: t('ns_msg_btn') });
+  if (unread('out') && D.assignment) items.push({ tone: 'hot', title: t('ns_reply_title', { name: D.assignment.name }), text: t('ns_reply_text'), tab: 'messages', btn: t('ns_reply_btn') });
   if (g.status === 'drawn' && me.viewed_at && D.assignment) items.push({ tone: 'calm', title: t('ns_you_gift', { name: D.assignment.name }), text: t('gs_' + me.gift_status + '_me'), tab: 'draw', btn: t('ns_open_draw') });
   if (D.santa && D.santa.gift_status !== 'none') items.push({ tone: 'calm', title: t('santa_status_title'), text: t('santa_status_' + D.santa.gift_status) });
   if (g.status !== 'drawn' && wc >= MIN_WISHES) items.push({ tone: 'calm', title: t('ns_wait_title'), text: t('ns_wait_text') });
@@ -814,7 +835,14 @@ function vGiftee() {
         ${profRows.length ? `<section class="card"><h2>${esc(t('profile_title', { name: a.name }))}</h2><dl class="profile">${profRows.map(([k, v]) => `<div><dt>${esc(t(k))}</dt><dd class="prewrap">${esc(v)}</dd></div>`).join('')}</dl></section>` : ''}
       </div>
     </div>
-    ${vThread('out')}`;
+    <section class="card ask-card"><p>${esc(t('ask_teaser', { name: a.name }))}</p><button type="button" class="btn secondary" data-act="tab" data-tab="messages">${ICON.chat}<span>${esc(t('ask_open'))}</span></button></section>`;
+}
+function vMessages() {
+  const D = S.me;
+  if (D.group.status !== 'drawn' || !D.assignment) {
+    return `<section class="card center empty-state"><span class="empty-ico" aria-hidden="true">${ICON.chat}</span><h1>${esc(t('msgs_wait_title'))}</h1><p>${esc(t('msgs_wait_text'))}</p></section>`;
+  }
+  return `<p class="lead-hint">${esc(t('msgs_intro'))}</p>${vThread('out')}${D.santa ? vThread('in') : ''}`;
 }
 function vGiftStatus() {
   const me = S.me.me;
@@ -857,7 +885,8 @@ function vWishRow(w, i) {
       <button type="button" class="icon-btn star-btn ${w.fav ? 'on' : ''}" data-act="fav" data-i="${i}" aria-pressed="${!!w.fav}" aria-label="${esc(t('fav'))}" title="${esc(t('fav'))}">${ICON.star}</button>
       <button type="button" class="icon-btn" data-act="del-wish" data-i="${i}" aria-label="${esc(t('remove'))}" title="${esc(t('remove'))}">${ICON.trash}</button>
     </div>
-    <div class="wr-more">
+    ${w._open || w.link || w.price !== '' || w.note ? '' : `<button type="button" class="linkbtn wr-toggle" data-act="wish-more" data-i="${i}">${esc(t('wish_more'))}</button>`}
+    <div class="wr-more" ${w._open || w.link || w.price !== '' || w.note ? '' : 'hidden'}>
       <input id="w-${i}-link" type="url" inputmode="url" maxlength="500" data-w="${i}" data-f="link" value="${esc(w.link)}" placeholder="${esc(t('wish_link_ph'))}" aria-label="${esc(t('wish_link'))}">
       <span class="wr-price"><input id="w-${i}-price" type="number" min="0" step="any" inputmode="decimal" data-w="${i}" data-f="price" value="${esc(w.price)}" placeholder="${esc(t('wish_price_ph'))}" aria-label="${esc(t('wish_price'))}"><span class="cur">${esc(w.cur)}</span></span>
       <input id="w-${i}-note" type="text" maxlength="200" data-w="${i}" data-f="note" value="${esc(w.note)}" placeholder="${esc(t('wish_note_ph'))}" aria-label="${esc(t('wish_note'))}">
@@ -871,10 +900,9 @@ function vWishes() {
   const count = wishCount(d.wishes);
   const pf = (key, label, ph) => `<div class="field"><label for="pf-${key}">${esc(label)}</label><input id="pf-${key}" type="text" maxlength="60" data-pf="${key}" value="${esc(d.profile[key])}" ${ph ? `placeholder="${esc(ph)}"` : ''}></div>`;
   const pa = (key, label, ph) => `<div class="field"><label for="pf-${key}">${esc(label)}</label><textarea id="pf-${key}" rows="3" maxlength="600" data-pf="${key}" ${ph ? `placeholder="${esc(ph)}"` : ''}>${esc(d.profile[key])}</textarea></div>`;
-  return `${D.santa ? vThread('in') : ''}
-    <form data-form="wishes" class="wish-form" novalidate>
+  return `<form data-form="wishes" class="wish-form" novalidate>
       <section class="card">
-        <div class="card-head"><h2>${esc(t('my_wishes'))}</h2><span class="pill ${count >= MIN_WISHES ? 'ok' : 'warn'}">${esc(t('wish_count', { n: count, min: MIN_WISHES }))}</span></div>
+        <div class="card-head"><h2>${esc(t('my_wishes'))}</h2><span id="wish-count" class="pill ${count >= MIN_WISHES ? 'ok' : 'warn'}">${esc(t('wish_count', { n: count, min: MIN_WISHES }))}</span></div>
         <p class="hint">${esc(t('wishes_privacy'))}</p>
         <ol class="wish-edit">${d.wishes.map((w, i) => vWishRow(w, i)).join('')}</ol>
         ${d.wishes.length < MAX_WISHES ? `<button type="button" class="btn secondary" data-act="add-wish">${ICON.plus}<span>${esc(t('add_wish'))}</span></button>` : ''}
@@ -888,7 +916,7 @@ function vWishes() {
         ${pa('dislikes', t('dislikes'), t('dislikes_ph'))}
         ${D.group.in_person ? '' : `${pa('address', t('address'), t('address_ph'))}<p class="hint">${esc(t('address_hint'))}</p>`}
       </section>
-      <div class="savebar"><span class="hint" id="save-state">${esc(S.draftDirty ? t('unsaved') : t('saved_state'))}</span><button class="btn" type="submit">${esc(t('save'))}</button></div>
+      <div class="savebar" aria-live="polite"><span class="hint" id="save-state">${esc(saveStateText())}</span>${S.saveFailed ? `<button class="btn small" type="submit">${esc(t('save_retry'))}</button>` : ''}</div>
     </form>`;
 }
 
@@ -956,24 +984,83 @@ function vAdmin() {
   const ok = ps.filter(p => p.wish_count >= MIN_WISHES).length;
   const viewed = ps.filter(p => p.viewed).length;
   const sub = g.status === 'drawn' ? t('admin_sub_drawn', { n: ps.length, viewed }) : t('admin_sub', { n: ps.length, ok });
-  return `<div class="shell admin">${vTop(g.name)}
-  <main class="main">
-    ${vHero(t('admin_kicker'), g.name, sub, g.exchange_at)}
-    ${store.get('wl_admin_saved_' + S.admin) ? '' : vAdminLink(true)}
-    ${vMeCard()}
-    <div class="grid2">
-      <section class="card people-card">
+  const ph = adminPhase(g);
+  const people = `<section class="card people-card">
         <div class="card-head"><h2>${esc(t('participants'))}</h2><span class="pill">${ps.length}</span></div>
         ${ps.length ? `<ul class="plist">${ps.map(vAdminPerson).join('')}</ul>` : `<p class="hint">${esc(t('no_participants'))}</p>`}
         ${g.status === 'open' ? vAddPerson() : `<p class="hint">${esc(t('locked_after_draw'))}</p>`}
-      </section>
-      <div class="stack">${vAdminReminders()}${vAdminDraw()}${vAdminSettings()}</div>
-    </div>
-    ${g.revealed && A.reveal ? vChain(A.reveal, ps) : ''}
-    ${store.get('wl_admin_saved_' + S.admin) ? vAdminLink(false) : ''}
-    ${vNextYear()}
-    ${vDanger()}
+      </section>`;
+  let body;
+  if (ph === 'prep') body = `<div class="grid2">${people}<div class="stack">${vSendAll()}${vAdminDraw()}</div></div>`;
+  else if (ph === 'run') body = `<div class="grid2"><div class="stack">${vAdminReminders()}${vAdminDraw()}</div>${people}</div>`;
+  else body = `${g.revealed && A.reveal ? vChain(A.reveal, ps) : ''}<div class="grid2"><div class="stack">${vAdminDraw()}${vNextYear()}</div>${people}</div>`;
+  return `<div class="shell admin">${vTop(g.name)}
+  <main class="main">
+    ${vHero(t('admin_kicker'), g.name, sub, g.exchange_at)}
+    ${vAdminPhases(ph)}
+    ${store.get('wl_admin_saved_' + S.admin) ? '' : vAdminLink(true)}
+    ${vMeCard()}
+    ${body}
+    <details class="card more-card" ${S.moreOpen ? 'open' : ''}>
+      <summary data-act="more-toggle"><h2>${esc(t('more_title'))}</h2><span class="hint">${esc(t('more_hint'))}</span></summary>
+      ${vAdminSettings()}
+      ${store.get('wl_admin_saved_' + S.admin) ? vAdminLink(false) : ''}
+      ${ph !== 'done' ? vNextYear() : ''}
+      ${vDanger()}
+    </details>
   </main>${vFoot()}</div>`;
+}
+/* prep: inviting and collecting wishes · run: drawn, waiting for the exchange · done: exchange or reveal reached */
+function adminPhase(g) {
+  if (g.status !== 'drawn') return 'prep';
+  const cd = countdown(g.exchange_at);
+  return g.revealed || (cd && cd.days < 0) ? 'done' : 'run';
+}
+function vAdminPhases(ph) {
+  const order = ['prep', 'run', 'done'], at = order.indexOf(ph);
+  return `<ol class="journey" aria-label="${esc(t('j_aria'))}">${order.map((k, i) => `<li class="${i < at ? 'done' : i === at ? 'now' : ''}" ${i === at ? 'aria-current="step"' : ''}>
+    <span class="j-dot" aria-hidden="true">${i < at ? '✓' : i + 1}</span><span class="j-label">${esc(t('phase_' + k))}</span></li>`).join('')}</ol>`;
+}
+/* People who have not opened their link yet, organiser left out. */
+function sendQueue() { return S.A.participants.filter(p => p.id !== S.A.organiser_id && !p.last_seen_at); }
+function vSendAll() {
+  const ps = S.A.participants.filter(p => p.id !== S.A.organiser_id);
+  if (!ps.length) return '';
+  const opened = ps.filter(p => p.last_seen_at).length;
+  const sent = ps.filter(p => p.last_seen_at || store.get(remKey(p.id))).length;
+  const left = sendQueue().length;
+  return `<section class="card send-card"><h2>${esc(t('send_title'))}</h2>
+    <p>${esc(t('send_status', { sent, opened, n: ps.length }))}</p>
+    ${left ? `<button type="button" class="btn" data-act="send-all">${ICON.share}<span>${esc(t('send_btn', { n: left }))}</span></button>` : `<p class="hint">${esc(t('send_all_opened'))}</p>`}
+    <p class="hint">${esc(t('send_hint'))}</p></section>`;
+}
+function openSendAll(i) {
+  const q = sendQueue();
+  if (!q.length) { closeModal(); toast(t('send_all_opened')); return; }
+  const idx = Math.min(Math.max(0, i || 0), q.length - 1), p = q[idx];
+  const msg = personMessage(p, 'invite', linkFor(p.token));
+  const last = idx >= q.length - 1;
+  openModal(`<h2 id="modal-title">${esc(t('send_step', { name: p.name, i: idx + 1, n: q.length }))}</h2>
+    <p class="hint">${esc(t('invite_hint', { lang: langName(p.lang) }))}</p>
+    <textarea class="invite-text" rows="6" readonly aria-label="${esc(p.name)}">${esc(msg)}</textarea>
+    ${shareButtons(msg, p.id)}
+    <div class="btn-row end">${last ? `<button type="button" class="btn secondary" data-act="close-modal">${esc(t('done'))}</button>`
+      : `<button type="button" class="btn secondary" data-act="send-next" data-i="${idx + 1}">${esc(t('next_person'))}</button>`}</div>`);
+}
+/* Households: people living together never draw each other. Stored as a shared key. */
+function housemates(p, all) { return p.household ? all.filter(x => x.id !== p.id && x.household === p.household) : []; }
+function newHouseKey() { return 'h' + Math.random().toString(36).slice(2, 8); }
+function vHousePicker(name, others, selected) {
+  if (!others.length) return '';
+  return `<fieldset class="field"><legend>${esc(t('lives_with_q'))}</legend>
+    <div class="chips">${others.map(o => `<label class="chip check-chip"><input type="checkbox" name="${name}" value="${esc(o.id)}" ${selected.includes(o.id) ? 'checked' : ''}> ${esc(o.emoji)} ${esc(o.name)}</label>`).join('')}</div>
+    <span class="hint">${esc(t('household_hint'))}</span></fieldset>`;
+}
+async function setHousehold(ids, key) {
+  for (const id of ids) {
+    const r = await rpc('wichteln_admin_update_participant', { p_admin: S.admin, p_id: id, p_patch: { household: key || '' } });
+    if (r && r.error) throw new Error(r.error);
+  }
 }
 function vAdminLink(prominent) {
   const link = adminLink();
@@ -1036,14 +1123,15 @@ function vAdminPerson(p) {
     <span class="avatar" aria-hidden="true">${esc(p.emoji)}</span>
     <div class="prow-main">
       <strong>${esc(p.name)}</strong>
-      <span class="prow-meta">${flag(p.country)} ${esc(countryName(p.country))}, ${esc(langName(p.lang))}${p.household ? `, ${esc(t('household_short', { h: p.household }))}` : ''}</span>
+      <span class="prow-meta">${flag(p.country)} ${esc(countryName(p.country))}, ${esc(langName(p.lang))}</span>
+      ${housemates(p, S.A.participants).length ? `<span class="prow-meta">${esc(t('lives_with', { names: housemates(p, S.A.participants).map(x => x.name).join(', ') }))}</span>` : ''}
       <span class="pills">
         ${isMe ? `<span class="pill me">${esc(t('you'))}</span>` : ''}
         <span class="pill ${p.wish_count >= MIN_WISHES ? 'ok' : 'warn'}">${esc(t('wish_count', { n: p.wish_count, min: MIN_WISHES }))}</span>
         ${p.has_pin ? `<span class="pill">${esc(t('pin_on'))}</span>` : ''}
-        ${!p.last_seen_at ? `<span class="pill">${esc(t('never_opened_link'))}</span>` : ''}
+        ${!p.last_seen_at && !isMe ? `<span class="pill">${esc(t('never_opened_link'))}</span>` : ''}
         ${g.status === 'drawn' ? `<span class="pill ${p.viewed ? 'ok' : ''}">${esc(p.viewed ? t('opened') : t('not_opened'))}</span><span class="pill">${esc(t('gs_' + p.gift_status))}</span>` : ''}
-        ${remAt && kind ? `<span class="pill">${esc(t('reminded_at', { date: fmtDay(remAt) }))}</span>` : ''}
+        ${remAt && kind ? `<span class="pill">${esc(t(kind === 'invite' ? 'sent_at' : 'reminded_at', { date: fmtDay(remAt) }))}</span>` : ''}
       </span>
     </div>
     <div class="prow-actions">
@@ -1056,9 +1144,10 @@ function vAddPerson() {
   const lastCc = store.get('wl_last_cc') || 'DE';
   return `<form data-form="add-person" class="add-person" novalidate>
     <h3>${esc(t('add_person'))}</h3>
-    ${field('ap-name', t('name'), '', { attrs: 'maxlength="60" required autocomplete="off"' })}
+    <div class="field"><label for="ap-names">${esc(t('add_names'))}</label><textarea id="ap-names" rows="2" maxlength="1200" autocomplete="off" placeholder="${esc(t('add_names_ph'))}" data-keep></textarea><span class="hint">${esc(t('add_names_hint'))}</span></div>
     <div class="row">${countrySelect('ap-country', lastCc)}${langSelect('ap-lang', langForCountry(lastCc))}</div>
-    ${field('ap-house', t('household'), '', { attrs: 'maxlength="60" autocomplete="off"', hint: t('household_hint'), ph: t('household_ph') })}
+    ${vHousePicker('ap-with', S.A.participants, [])}
+    <label class="check"><input type="checkbox" id="ap-together" data-keep> ${esc(t('add_together'))}</label>
     <button type="submit" class="btn">${ICON.plus}<span>${esc(t('add'))}</span></button>
   </form>`;
 }
@@ -1220,13 +1309,6 @@ function loadQR() {
 }
 
 /* ---------------- modals with content ---------------- */
-function openLayouts() {
-  const isAdmin = S.mode === 'admin' && S.A;
-  openModal(`<h2 id="modal-title">${esc(t('layout_title'))}</h2><p class="hint">${esc(t('layout_hint'))}</p>
-    ${layoutPicker('m-layout', S.layout)}
-    ${store.get('wl_layout') ? `<button type="button" class="btn ghost" data-act="layout-reset">${esc(t('layout_follow_group'))}</button>` : ''}
-    ${isAdmin ? `<p class="hint">${esc(t('layout_admin_hint'))}</p>` : ''}`);
-}
 function personMessage(p, kind, link) {
   const g = S.A.group;
   const deadline = g.wish_deadline ? tl(p.lang, 'invite_deadline', { date: fmtDateIn(p.lang, g.wish_deadline) }) : '';
@@ -1291,7 +1373,7 @@ function openEditPerson(id) {
     <form data-form="edit-person" data-id="${esc(p.id)}" novalidate>
       ${field('ep-name', t('name'), p.name, { attrs: 'maxlength="60" required', keep: false })}
       <div class="row">${countrySelect('ep-country', p.country)}${langSelect('ep-lang', p.lang)}</div>
-      ${open ? field('ep-house', t('household'), p.household || '', { attrs: 'maxlength="60"', hint: t('household_hint'), keep: false }) : ''}
+      ${open ? vHousePicker('ep-with', S.A.participants.filter(x => x.id !== p.id), housemates(p, S.A.participants).map(x => x.id)) : ''}
       <div class="field"><span class="label">${esc(t('emoji'))}</span>${emojiGrid('ep-emoji', p.emoji)}</div>
       <button type="submit" class="btn">${esc(t('save'))}</button>
     </form>
@@ -1340,12 +1422,27 @@ function openSettings() {
     </section>
     <section class="modal-section">
       <h3>${esc(t('layout'))}</h3>
+      <p class="hint">${esc(t('layout_hint'))}</p>
       ${layoutPicker('m-layout', S.layout)}
+      ${store.get('wl_layout') ? `<button type="button" class="btn ghost" data-act="layout-reset">${esc(t('layout_follow_group'))}</button>` : ''}
+    </section>
+    <section class="modal-section">
+      <h3>${esc(t('big_title'))}</h3>
+      <label class="check"><input type="checkbox" data-act="big-toggle" ${isBig() ? 'checked' : ''}> ${esc(t('big_label'))}</label>
     </section>
     <section class="modal-section">
       <h3>${esc(t('forget_device'))}</h3><p class="hint">${esc(t('forget_device_hint'))}</p>
       <button type="button" class="btn ghost" data-act="forget-device">${esc(t('forget_device'))}</button>
     </section>`);
+}
+
+/* ---------------- big text ---------------- */
+function isBig() { return store.get('wl_big') === '1'; }
+function applyBig() { document.documentElement.classList.toggle('big', isBig()); }
+function vBigOffer() {
+  if (store.get('wl_big') != null) return '';
+  return `<section class="card big-offer"><p><strong>${esc(t('big_offer'))}</strong></p>
+    <div class="btn-row"><button type="button" class="btn" data-act="big-yes">${esc(t('big_yes'))}</button><button type="button" class="btn ghost" data-act="big-no">${esc(t('big_no'))}</button></div></section>`;
 }
 
 /* ---------------- home screen app & notifications ---------------- */
@@ -1417,6 +1514,8 @@ function vPushControls() {
 }
 function vAppCard() {
   if (store.get(hintKey()) === 'no') return '';
+  const D = S.me;
+  if (wishCount(D.me.wishes) < MIN_WISHES && D.group.status !== 'drawn') return ''; // ask once there is something to be told about
   if (S.push === 'install') {
     return `<section class="card app-card"><h2>${esc(t('app_title'))}</h2><p>${esc(t('app_text'))}</p>
       <ol class="how-list">${['app_step1', 'app_step2', 'app_step3'].map(k => `<li>${esc(t(k))}</li>`).join('')}</ol>
@@ -1485,24 +1584,21 @@ async function onClick(e) {
   const act = el.dataset.act;
   switch (act) {
     case 'tab':
-      if (S.tab === 'wishes' && el.dataset.tab !== 'wishes' && S.draftDirty) {
-        const go = await askConfirm(t('unsaved_title'), t('unsaved_text'), t('discard'), true);
-        if (!go) return;
-        S.draft = null; S.draftDirty = false;
-      }
+      if (S.tab === 'wishes' && el.dataset.tab !== 'wishes') flushWishes();
       S.tab = el.dataset.tab;
-      if (S.tab === 'draw') markSeen('out');
-      if (S.tab === 'wishes') markSeen('in');
+      if (S.tab === 'messages') { markSeen('out'); markSeen('in'); }
       render(); window.scrollTo({ top: 0, behavior: reducedMotion() ? 'auto' : 'smooth' });
       break;
     case 'lang': setLang(el.dataset.lang); break;
-    case 'layouts': openLayouts(); break;
     case 'layout-reset':
       store.del('wl_layout');
       S.layout = (S.me && S.me.group.layout) || (S.A && S.A.group.layout) || 'classic';
       render(); closeModal(); break;
     case 'settings': openSettings(); break;
     case 'privacy': openPrivacy(); break;
+    case 'big-yes': store.set('wl_big', '1'); applyBig(); render(); break;
+    case 'big-no': store.set('wl_big', '0'); render(); break;
+    case 'big-toggle': store.set('wl_big', el.checked ? '1' : '0'); applyBig(); break;
     case 'push-on': safely(pushOn); break;
     case 'push-off': safely(pushOff); break;
     case 'app-hint-no': store.set(hintKey(), 'no'); render(); break;
@@ -1510,9 +1606,9 @@ async function onClick(e) {
     case 'retry': route(); break;
     case 'nav': {
       e.preventDefault();
-      const dirty = S.draftDirty || (S.mode === 'admin' && S.formDirty);
-      if (dirty && !await askConfirm(t('unsaved_title'), t(S.draftDirty ? 'unsaved_text' : 'unsaved_form_text'), t('discard'), true)) return;
-      S.draftDirty = false; S.formDirty = false;
+      if (S.draftDirty) await flushWishes();
+      if (S.mode === 'admin' && S.formDirty && !await askConfirm(t('unsaved_title'), t('unsaved_form_text'), t('discard'), true)) return;
+      S.formDirty = false;
       location.hash = el.getAttribute('href').slice(1);
       break;
     }
@@ -1560,7 +1656,7 @@ async function onClick(e) {
     case 'add-wish':
       if (S.draft.wishes.length < MAX_WISHES) {
         S.draft.wishes.push({ title: '', link: '', price: '', cur: curOf(S.me.me.country), note: '', fav: false });
-        S.draftDirty = true; render();
+        render();
         const inp = document.getElementById(`w-${S.draft.wishes.length - 1}-title`);
         if (inp) inp.focus();
       }
@@ -1568,10 +1664,15 @@ async function onClick(e) {
     case 'del-wish':
       S.draft.wishes.splice(Number(el.dataset.i), 1);
       if (!S.draft.wishes.length) S.draft.wishes.push({ title: '', link: '', price: '', cur: curOf(S.me.me.country), note: '', fav: false });
-      S.draftDirty = true; render(); break;
+      markDraftDirty(); render(); break;
+    case 'wish-more': {
+      const w = S.draft.wishes[Number(el.dataset.i)];
+      if (w) { w._open = true; render(); const l = document.getElementById(`w-${el.dataset.i}-link`); if (l) l.focus(); }
+      break;
+    }
     case 'fav': {
       const w = S.draft.wishes[Number(el.dataset.i)];
-      if (w) { w.fav = !w.fav; S.draftDirty = true; render(); }
+      if (w) { w.fav = !w.fav; markDraftDirty(); render(); }
       break;
     }
     case 'inspire': {
@@ -1580,7 +1681,7 @@ async function onClick(e) {
       if (slot < 0 && S.draft.wishes.length < MAX_WISHES) { S.draft.wishes.push({ title: '', link: '', price: '', cur: curOf(S.me.me.country), note: '', fav: false }); slot = S.draft.wishes.length - 1; }
       if (slot >= 0) {
         S.draft.wishes[slot].title = v + ': ';
-        S.draftDirty = true; render();
+        render();
         const inp = document.getElementById(`w-${slot}-title`);
         if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
       }
@@ -1610,6 +1711,9 @@ async function onClick(e) {
       await loadAdmin(true);
     }); break;
     case 'invite': openInvite(el.dataset.id, el.dataset.kind); break;
+    case 'send-all': openSendAll(0); break;
+    case 'send-next': openSendAll(Number(el.dataset.i)); break;
+    case 'more-toggle': S.moreOpen = !el.closest('details').open; break;
     case 'edit-person': openEditPerson(el.dataset.id); break;
     case 'reset-pin': safely(async () => {
       const r = await rpc('wichteln_admin_reset_pin', { p_admin: S.admin, p_id: el.dataset.id });
@@ -1675,18 +1779,112 @@ function onInput(e) {
   const el = e.target;
   if (el.dataset.w != null && S.draft) {
     const w = S.draft.wishes[Number(el.dataset.w)];
-    if (w) { w[el.dataset.f] = el.value; markDraftDirty(); }
+    if (w) {
+      w[el.dataset.f] = el.value;
+      if (el.dataset.f === 'link' && !String(w.title).trim()) {
+        const guess = titleFromLink(el.value);
+        const ti = document.getElementById(`w-${el.dataset.w}-title`);
+        if (guess && ti) { w.title = guess; ti.value = guess; }
+      }
+      markDraftDirty();
+    }
     return;
   }
   if (el.dataset.pf && S.draft) { S.draft.profile[el.dataset.pf] = el.value; markDraftDirty(); return; }
   if (el.closest('form[data-form="group"], form[data-form="add-person"], form[data-form="create"]')) S.formDirty = true;
 }
 function markDraftDirty() {
-  if (!S.draftDirty) {
-    S.draftDirty = true;
-    const s = $('#save-state');
-    if (s) s.textContent = t('unsaved');
-  }
+  S.draftDirty = true;
+  scheduleSave();
+}
+/* ---------------- wishes save themselves ---------------- */
+let saveTimer = null, saving = null;
+function saveStateText() {
+  if (S.saveFailed) return t('save_failed');
+  if (saving || S.draftDirty) return t('saving');
+  return t('saved_auto');
+}
+function showSaveState() {
+  const s = $('#save-state'); if (s) s.textContent = saveStateText();
+  const c = $('#wish-count');
+  if (c && S.draft) { const n = wishCount(S.draft.wishes); c.textContent = t('wish_count', { n, min: MIN_WISHES }); c.className = 'pill ' + (n >= MIN_WISHES ? 'ok' : 'warn'); }
+}
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => { saveTimer = null; saveWishes(); }, 1200);
+  showSaveState();
+}
+function flushWishes() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  return S.draftDirty ? saveWishes() : (saving || Promise.resolve());
+}
+function wishPayload() {
+  const d = S.draft, myCur = curOf(S.me.me.country);
+  const wishes = d.wishes.map(w => ({
+    title: String(w.title || '').trim().slice(0, 140),
+    link: String(w.link || '').trim().slice(0, 500),
+    price: w.price === '' || w.price == null || isNaN(Number(w.price)) ? null : Math.max(0, Number(w.price)),
+    cur: w.cur || myCur,
+    note: String(w.note || '').trim().slice(0, 200),
+    fav: !!w.fav,
+  })).filter(w => w.title);
+  const profile = {};
+  for (const k in d.profile) profile[k] = String(d.profile[k] || '').trim().slice(0, 600);
+  return { wishes, profile };
+}
+/* Comparable form of wishes + profile (the database does not keep key order). */
+function wishSig(wishes, profile) {
+  const w = (Array.isArray(wishes) ? wishes : []).map(x => [x.title || '', x.link || '', x.price ?? null, x.cur || '', x.note || '', !!x.fav]);
+  const p = Object.keys(profile || {}).sort().filter(k => profile[k]).map(k => [k, profile[k]]);
+  return JSON.stringify([w, p]);
+}
+async function saveWishes() {
+  if (!S.draft || !S.me) return;
+  const token = S.token, pin = S.pin || null, me = S.me;
+  if (saving) { await saving; if (!S.draftDirty || token !== S.token) return; }
+  const before = wishCount(me.me.wishes);
+  const patch = wishPayload();
+  S.draftDirty = false;
+  saving = (async () => {
+    try {
+      const r = await rpc('wichteln_save_me', { p_token: token, p_pin: pin, p_patch: patch });
+      if (token !== S.token) return;
+      if (authFailed(r)) return;
+      if (r.error) throw new Error(r.error);
+      S.saveFailed = false;
+      S.me.me.wishes = patch.wishes; S.me.me.profile = patch.profile;
+      S.savedSig = wishSig(patch.wishes, patch.profile);
+      if (before < MIN_WISHES && patch.wishes.length >= MIN_WISHES) onWishesDone();
+    } catch (e) {
+      console.error(e); S.saveFailed = true; S.draftDirty = true;
+    }
+  })();
+  showSaveState();
+  await saving; saving = null;
+  if (S.saveFailed) render(); else showSaveState();
+}
+/* Right after the third wish: the moment where notifications make sense. */
+async function onWishesDone() {
+  toast(t('wishes_done'));
+  if (S.push === 'off' && store.get(hintKey()) !== 'no' && await askConfirm(t('push_title'), t('push_text_after'), t('push_on'))) safely(pushOn);
+}
+/* A readable title from a shop link: the longest word-like part of the path. */
+function titleFromLink(raw) {
+  const url = safeUrl(raw);
+  if (!url) return '';
+  let best = '';
+  try {
+    for (const seg of new URL(url).pathname.split('/')) {
+      const part = decodeURIComponent(seg).replace(/\.(html?|php|aspx?)$/i, '');
+      if (!/[a-zA-ZÀ-ỹ]{3,}/.test(part) || !/[-_ ]/.test(part)) continue;
+      // drop article numbers and IDs (long digit runs, letter-digit codes); keep words and short numbers like "911"
+      const words = part.split(/[-_ ]+/).filter(x => x && !/^\d{5,}$/.test(x) && !/^(?=.*\d)(?=.*[a-z])[a-z0-9]{6,}$/i.test(x));
+      const text = words.join(' ').trim();
+      if (text.length > best.length) best = text;
+    }
+  } catch { return ''; }
+  if (best.length < 4) return '';
+  return (best.charAt(0).toUpperCase() + best.slice(1)).slice(0, 140);
 }
 function onChange(e) {
   const el = e.target;
@@ -1755,30 +1953,13 @@ async function submitForm(kind, form) {
       if (r.error) { toast(t(r.error === 'rate' ? 'err_rate' : 'err_generic'), true); return; }
       input.value = '';
       await loadMe(true);
-      markSeen(form.dataset.to === 'recipient' ? 'out' : 'in');
+      markSeen('out'); markSeen('in');
       toast(t('sent'));
       return;
     }
     case 'wishes': {
-      const d = S.draft;
-      const myCur = curOf(S.me.me.country);
-      const wishes = d.wishes.map(w => ({
-        title: String(w.title || '').trim().slice(0, 140),
-        link: String(w.link || '').trim().slice(0, 500),
-        price: w.price === '' || w.price == null || isNaN(Number(w.price)) ? null : Math.max(0, Number(w.price)),
-        cur: w.cur || myCur,
-        note: String(w.note || '').trim().slice(0, 200),
-        fav: !!w.fav,
-      })).filter(w => w.title);
-      const profile = {};
-      for (const k in d.profile) profile[k] = String(d.profile[k] || '').trim().slice(0, 600);
-      const r = await rpc('wichteln_save_me', pArgs({ p_patch: { wishes, profile } }));
-      if (authFailed(r)) return;
-      if (r.error) throw new Error(r.error);
-      S.draft = null; S.draftDirty = false;
-      await loadMe(true);
-      const n = wishes.length;
-      toast(n >= MIN_WISHES ? t('saved') : t('saved_missing', { n: MIN_WISHES - n }));
+      S.draftDirty = true; S.saveFailed = false;
+      await flushWishes();
       return;
     }
     case 'settings': {
@@ -1806,20 +1987,30 @@ async function submitForm(kind, form) {
       return;
     }
     case 'add-person': {
-      const name = $('#ap-name').value.trim();
-      if (!name) { toast(t('err_name'), true); $('#ap-name').focus(); return; }
+      const names = [...new Set($('#ap-names').value.split(/\n|,|;/).map(x => x.trim().slice(0, 60)).filter(Boolean))].slice(0, 30);
+      if (!names.length) { toast(t('err_name'), true); $('#ap-names').focus(); return; }
       const cc = $('#ap-country').value;
-      const r = await rpc('wichteln_admin_add_participant', {
-        p_admin: S.admin, p_name: name, p_country: cc, p_lang: $('#ap-lang').value,
-        p_household: $('#ap-house').value.trim() || null, p_emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
-      });
-      if (r.error) { toast(t(r.error === 'already_drawn' ? 'locked_after_draw' : 'err_generic'), true); return; }
+      const withIds = [...form.querySelectorAll('input[name="ap-with"]:checked')].map(x => x.value);
+      const together = $('#ap-together').checked || withIds.length > 0;
+      let key = null;
+      if (together && (names.length > 1 || withIds.length)) {
+        const others = S.A.participants.filter(p => withIds.includes(p.id));
+        key = (others.find(p => p.household) || {}).household || newHouseKey();
+        await setHousehold(others.filter(p => p.household !== key).map(p => p.id), key);
+      }
+      for (const name of names) {
+        const r = await rpc('wichteln_admin_add_participant', {
+          p_admin: S.admin, p_name: name, p_country: cc, p_lang: $('#ap-lang').value,
+          p_household: key, p_emoji: EMOJIS[Math.floor(Math.random() * EMOJIS.length)],
+        });
+        if (r.error) { toast(t(r.error === 'already_drawn' ? 'locked_after_draw' : 'err_generic'), true); await loadAdmin(true); return; }
+      }
       store.set('wl_last_cc', cc);
       S.formDirty = false;
-      $('#ap-name').value = ''; $('#ap-house').value = '';
+      $('#ap-names').value = ''; $('#ap-together').checked = false;
       await loadAdmin(true);
-      toast(t('added', { name }));
-      const inp = $('#ap-name'); if (inp) inp.focus();
+      toast(names.length > 1 ? t('added_n', { n: names.length }) : t('added', { name: names[0] }));
+      const inp = $('#ap-names'); if (inp) inp.focus();
       return;
     }
     case 'group': {
@@ -1846,10 +2037,16 @@ async function submitForm(kind, form) {
       const name = $('#ep-name').value.trim();
       if (!name) { toast(t('err_name'), true); return; }
       const patch = { name, country: $('#ep-country').value, lang: $('#ep-lang').value };
-      const house = $('#ep-house'); if (house) patch.household = house.value.trim();
       const emoji = (form.querySelector('input[name="ep-emoji"]:checked') || {}).value; if (emoji) patch.emoji = emoji;
       const r = await rpc('wichteln_admin_update_participant', { p_admin: S.admin, p_id: id, p_patch: patch });
       if (r.error) throw new Error(r.error);
+      if (S.A.group.status === 'open') {
+        // "lives with exactly these people": a fresh shared key; people left out keep their old household among themselves
+        const me = S.A.participants.find(x => x.id === id);
+        const want = [...form.querySelectorAll('input[name="ep-with"]:checked')].map(x => x.value).sort();
+        const had = housemates(me, S.A.participants).map(x => x.id).sort();
+        if (want.join() !== had.join()) await setHousehold(want.length ? [id, ...want] : [id], want.length ? newHouseKey() : '');
+      }
       closeModal(); await loadAdmin(true); toast(t('saved'));
       return;
     }
@@ -1861,7 +2058,7 @@ async function submitForm(kind, form) {
 function boot() {
   S.lang = store.get('wl_lang') || guessLang();
   S.layout = store.get('wl_layout') || 'classic';
-  applyTheme();
+  applyTheme(); applyBig();
   document.addEventListener('click', onClick);
   document.addEventListener('input', onInput);
   document.addEventListener('change', onChange);
@@ -1869,7 +2066,7 @@ function boot() {
   window.addEventListener('hashchange', route);
   window.addEventListener('online', () => { if (S.net) route(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell is optional */ });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') poll(); else if (S.draftDirty) flushWishes(); });
   window.addEventListener('beforeunload', e => { if (S.draftDirty || S.formDirty) { e.preventDefault(); e.returnValue = ''; } });
   setInterval(poll, POLL_MS);
   setInterval(tick, 20000);

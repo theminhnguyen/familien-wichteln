@@ -12,14 +12,14 @@ type Kind = 'drawn' | 'msg_in' | 'msg_reply' | 'shipped' | 'reveal';
 const TEXT: Record<string, Record<Kind, string>> = {
   de: {
     drawn: 'Die Auslosung ist da! Öffne dein Los und schau, wen du beschenkst.',
-    msg_in: 'Dein Wichtel hat dir eine Frage geschickt.',
+    msg_in: 'Du hast eine anonyme Frage bekommen.',
     msg_reply: 'Auf deine Frage gibt es eine Antwort.',
     shipped: 'Dein Geschenk ist unterwegs 📦',
     reveal: 'Die Auflösung ist da: Wer hat wen beschenkt?',
   },
   en: {
     drawn: 'Names have been drawn! Open yours to see who you are giving to.',
-    msg_in: 'Your Secret Santa sent you a question.',
+    msg_in: 'You got an anonymous question.',
     msg_reply: 'Your question has an answer.',
     shipped: 'Your gift is on its way 📦',
     reveal: 'The big reveal is here: who gave to whom?',
